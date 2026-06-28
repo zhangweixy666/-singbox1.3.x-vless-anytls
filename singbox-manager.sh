@@ -80,19 +80,19 @@ install_dependencies() {
     case "$PACKAGE_MANAGER" in
         apk)
             apk update
-            apk add --no-cache curl ca-certificates tar gzip openssl openrc iproute2 procps coreutils
+            apk add --no-cache curl wget nano ca-certificates tar gzip openssl openrc iproute2 procps coreutils
             update-ca-certificates >/dev/null 2>&1 || true
             ;;
         apt)
             apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates tar gzip openssl iproute2 procps coreutils
+            DEBIAN_FRONTEND=noninteractive apt-get install -y curl wget nano ca-certificates tar gzip openssl iproute2 procps coreutils
             update-ca-certificates >/dev/null 2>&1 || true
             ;;
     esac
     green "依赖安装完成"
 }
 
-load_params() {
+set_default_params() {
     ENABLE_VLESS="${ENABLE_VLESS:-0}"
     ENABLE_ANYTLS="${ENABLE_ANYTLS:-0}"
     VLESS_PORT="${VLESS_PORT:-}"
@@ -104,28 +104,84 @@ load_params() {
     ANYTLS_PASSWORD="${ANYTLS_PASSWORD:-}"
     SERVER_ADDR="${SERVER_ADDR:-}"
     NODE_NAME="${NODE_NAME:-sing-box-node}"
+}
+
+is_allowed_param_key() {
+    case "$1" in
+        ENABLE_VLESS|ENABLE_ANYTLS|VLESS_PORT|WS_PATH|UUID|WS_HOST|ANYTLS_PORT|ANYTLS_NAME|ANYTLS_PASSWORD|SERVER_ADDR|NODE_NAME)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+set_param_value() {
+    KEY_NAME="$1"
+    KEY_VALUE="$2"
+
+    case "$KEY_NAME" in
+        ENABLE_VLESS) ENABLE_VLESS="$KEY_VALUE" ;;
+        ENABLE_ANYTLS) ENABLE_ANYTLS="$KEY_VALUE" ;;
+        VLESS_PORT) VLESS_PORT="$KEY_VALUE" ;;
+        WS_PATH) WS_PATH="$KEY_VALUE" ;;
+        UUID) UUID="$KEY_VALUE" ;;
+        WS_HOST) WS_HOST="$KEY_VALUE" ;;
+        ANYTLS_PORT) ANYTLS_PORT="$KEY_VALUE" ;;
+        ANYTLS_NAME) ANYTLS_NAME="$KEY_VALUE" ;;
+        ANYTLS_PASSWORD) ANYTLS_PASSWORD="$KEY_VALUE" ;;
+        SERVER_ADDR) SERVER_ADDR="$KEY_VALUE" ;;
+        NODE_NAME) NODE_NAME="$KEY_VALUE" ;;
+    esac
+}
+
+load_params() {
+    set_default_params
 
     if [ -f "$PARAMS_FILE" ]; then
-        # shellcheck disable=SC1090
-        . "$PARAMS_FILE"
+        while IFS= read -r PARAM_LINE || [ -n "$PARAM_LINE" ]; do
+            case "$PARAM_LINE" in
+                ''|'#'*)
+                    continue
+                    ;;
+            esac
+
+            PARAM_KEY=${PARAM_LINE%%=*}
+            PARAM_VALUE=${PARAM_LINE#*=}
+
+            if [ "$PARAM_KEY" = "$PARAM_LINE" ]; then
+                continue
+            fi
+
+            if is_allowed_param_key "$PARAM_KEY"; then
+                set_param_value "$PARAM_KEY" "$PARAM_VALUE"
+            fi
+        done < "$PARAMS_FILE"
     fi
+}
+
+write_param_line() {
+    PARAM_KEY="$1"
+    PARAM_VALUE="$2"
+    printf '%s=%s\n' "$PARAM_KEY" "$PARAM_VALUE"
 }
 
 save_params() {
     mkdir -p "$CONFIG_DIR"
-    cat > "$PARAMS_FILE" <<EOF_PARAMS
-ENABLE_VLESS=${ENABLE_VLESS}
-ENABLE_ANYTLS=${ENABLE_ANYTLS}
-VLESS_PORT=${VLESS_PORT}
-WS_PATH='${WS_PATH}'
-UUID=${UUID}
-WS_HOST='${WS_HOST}'
-ANYTLS_PORT=${ANYTLS_PORT}
-ANYTLS_NAME='${ANYTLS_NAME}'
-ANYTLS_PASSWORD='${ANYTLS_PASSWORD}'
-SERVER_ADDR='${SERVER_ADDR}'
-NODE_NAME='${NODE_NAME}'
-EOF_PARAMS
+    {
+        write_param_line "ENABLE_VLESS" "${ENABLE_VLESS}"
+        write_param_line "ENABLE_ANYTLS" "${ENABLE_ANYTLS}"
+        write_param_line "VLESS_PORT" "${VLESS_PORT}"
+        write_param_line "WS_PATH" "${WS_PATH}"
+        write_param_line "UUID" "${UUID}"
+        write_param_line "WS_HOST" "${WS_HOST}"
+        write_param_line "ANYTLS_PORT" "${ANYTLS_PORT}"
+        write_param_line "ANYTLS_NAME" "${ANYTLS_NAME}"
+        write_param_line "ANYTLS_PASSWORD" "${ANYTLS_PASSWORD}"
+        write_param_line "SERVER_ADDR" "${SERVER_ADDR}"
+        write_param_line "NODE_NAME" "${NODE_NAME}"
+    } > "$PARAMS_FILE"
     chmod 600 "$PARAMS_FILE"
 }
 
@@ -377,6 +433,22 @@ prompt_anytls() {
     return 0
 }
 
+json_escape() {
+    printf '%s' "$1" | sed \
+        -e 's/\\/\\\\/g' \
+        -e 's/"/\\"/g' \
+        -e 's/	/\\t/g' \
+        -e 's/
+/\\r/g' \
+        -e ':a;N;$!ba;s/\n/\\n/g'
+}
+
+append_json_string_field() {
+    JSON_KEY="$1"
+    JSON_VALUE="$2"
+    printf '      "%s": "%s"' "$JSON_KEY" "$(json_escape "$JSON_VALUE")"
+}
+
 generate_config_to_file() {
     TARGET_CONFIG_FILE="$1"
 
@@ -395,6 +467,8 @@ EOF_CONF
     wrote_anything=0
 
     if [ "${ENABLE_VLESS}" = "1" ]; then
+        UUID_ESCAPED="$(json_escape "$UUID")"
+        WS_PATH_ESCAPED="$(json_escape "$WS_PATH")"
         cat >> "$TARGET_CONFIG_FILE" <<EOF_CONF
     {
       "type": "vless",
@@ -403,12 +477,12 @@ EOF_CONF
       "listen_port": ${VLESS_PORT},
       "users": [
         {
-          "uuid": "${UUID}"
+          "uuid": "${UUID_ESCAPED}"
         }
       ],
       "transport": {
         "type": "ws",
-        "path": "${WS_PATH}",
+        "path": "${WS_PATH_ESCAPED}",
         "early_data_header_name": "Sec-WebSocket-Protocol"
       }
     }
@@ -418,6 +492,11 @@ EOF_CONF
 
     if [ "${ENABLE_ANYTLS}" = "1" ]; then
         ensure_cert_exists
+        ANYTLS_NAME_ESCAPED="$(json_escape "$ANYTLS_NAME")"
+        ANYTLS_PASSWORD_ESCAPED="$(json_escape "$ANYTLS_PASSWORD")"
+        CERT_FILE_ESCAPED="$(json_escape "$CERT_FILE")"
+        KEY_FILE_ESCAPED="$(json_escape "$KEY_FILE")"
+
         if [ "$wrote_anything" = "1" ]; then
             printf ',\n' >> "$TARGET_CONFIG_FILE"
         fi
@@ -429,15 +508,15 @@ EOF_CONF
       "listen_port": ${ANYTLS_PORT},
       "users": [
         {
-          "name": "${ANYTLS_NAME}",
-          "password": "${ANYTLS_PASSWORD}"
+          "name": "${ANYTLS_NAME_ESCAPED}",
+          "password": "${ANYTLS_PASSWORD_ESCAPED}"
         }
       ],
       "padding_scheme": [],
       "tls": {
         "enabled": true,
-        "certificate_path": "${CERT_FILE}",
-        "key_path": "${KEY_FILE}"
+        "certificate_path": "${CERT_FILE_ESCAPED}",
+        "key_path": "${KEY_FILE_ESCAPED}"
       }
     }
 EOF_CONF
@@ -787,6 +866,10 @@ enable_ipv6_persistent() {
             sysctl -w net.ipv6.conf.default.disable_ipv6=0 >/dev/null 2>&1 || true
             sysctl -w net.ipv6.conf.lo.disable_ipv6=0 >/dev/null 2>&1 || true
             case "$INIT_SYSTEM" in
+                openrc)
+                    rc-update add sysctl boot >/dev/null 2>&1 || true
+                    rc-service sysctl restart >/dev/null 2>&1 || true
+                    ;;
                 systemd)
                     systemctl restart systemd-sysctl >/dev/null 2>&1 || true
                     ;;
@@ -834,7 +917,7 @@ create_vless_node() {
         return 1
     fi
 
-    if [ "${ENABLE_ANYTLS}" = "1" ] && [ "$VLESS_PORT" = "$ANYTLS_PORT" ]; then
+    if [ "${ENABLE_ANYTLS}" = "1" ] && [ -n "${ANYTLS_PORT}" ] && [ "$VLESS_PORT" = "$ANYTLS_PORT" ]; then
         red "VLESS 端口和 AnyTLS 端口不能相同"
         return 1
     fi
@@ -872,7 +955,7 @@ create_anytls_node() {
         return 1
     fi
 
-    if [ "${ENABLE_VLESS}" = "1" ] && [ "$VLESS_PORT" = "$ANYTLS_PORT" ]; then
+    if [ "${ENABLE_VLESS}" = "1" ] && [ -n "${VLESS_PORT}" ] && [ "$VLESS_PORT" = "$ANYTLS_PORT" ]; then
         red "VLESS 端口和 AnyTLS 端口不能相同"
         return 1
     fi
@@ -881,7 +964,7 @@ create_anytls_node() {
         return 1
     fi
 
-    generate_self_signed_cert
+    ensure_cert_exists
 
     line
     green "正在生成配置..."
