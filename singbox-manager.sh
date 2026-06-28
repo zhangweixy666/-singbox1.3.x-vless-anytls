@@ -8,6 +8,9 @@ SINGBOX_TAG="v${SINGBOX_VERSION}"
 INSTALL_DIR="/usr/local/bin"
 BIN_FILE="${INSTALL_DIR}/sing-box"
 
+CLI_NAME="singbox"
+CLI_LINK_PATH="/usr/local/bin/${CLI_NAME}"
+
 CONFIG_DIR="/etc/sing-box"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 PARAMS_FILE="${CONFIG_DIR}/params.env"
@@ -1015,10 +1018,28 @@ uninstall_all() {
             esac
             rm -f "$BIN_FILE"
             [ -d "$CONFIG_DIR" ] && rm -rf "$CONFIG_DIR"
+            [ -f "$CLI_LINK_PATH" ] && rm -f "$CLI_LINK_PATH"
             green "已卸载"
             ;;
         *) yellow "已取消" ;;
     esac
+}
+
+install_cli_command() {
+    line
+    green "正在安装命令入口..."
+
+    SCRIPT_SOURCE="$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")"
+
+    if [ ! -f "$SCRIPT_SOURCE" ]; then
+        red "无法定位当前脚本文件"
+        return 1
+    fi
+
+    install -m 755 "$SCRIPT_SOURCE" "$CLI_LINK_PATH"
+
+    green "命令已安装: ${CLI_LINK_PATH}"
+    green "以后可直接输入: ${CLI_NAME}"
 }
 
 install_only() {
@@ -1031,6 +1052,11 @@ install_only() {
     else
         yellow "当前未配置任何节点，已完成安装，但不会启动 sing-box"
     fi
+}
+
+exit_with_hint() {
+    green "已退出，后续可直接输入 ${CLI_NAME} 打开菜单"
+    exit 0
 }
 
 menu() {
@@ -1050,9 +1076,10 @@ menu() {
         printf "10. 重启 sing-box\n"
         printf "11. 查看 sing-box 日志\n"
         printf "12. 重建服务文件\n"
-        printf "13. 禁用 IPv6\n"
-        printf "14. 恢复 IPv6\n"
-        printf "15. 卸载 sing-box\n"
+        printf "13. 安装 singbox 命令入口\n"
+        printf "14. 禁用 IPv6\n"
+        printf "15. 恢复 IPv6\n"
+        printf "16. 卸载 sing-box\n"
         printf "0. 退出\n"
         line
         printf "请选择: "
@@ -1074,10 +1101,11 @@ menu() {
             10) restart_singbox_service ;;
             11) show_service_logs ;;
             12) rebuild_service_files ;;
-            13) disable_ipv6_persistent ;;
-            14) enable_ipv6_persistent ;;
-            15) uninstall_all ;;
-            0) exit 0 ;;
+            13) install_cli_command ;;
+            14) disable_ipv6_persistent ;;
+            15) enable_ipv6_persistent ;;
+            16) uninstall_all ;;
+            0) exit_with_hint ;;
             *) red "无效选择" ;;
         esac
     done
