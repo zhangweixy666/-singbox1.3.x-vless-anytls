@@ -164,27 +164,21 @@ load_params() {
     fi
 }
 
-write_param_line() {
-    PARAM_KEY="$1"
-    PARAM_VALUE="$2"
-    printf '%s=%s\n' "$PARAM_KEY" "$PARAM_VALUE"
-}
-
 save_params() {
     mkdir -p "$CONFIG_DIR"
-    {
-        write_param_line "ENABLE_VLESS" "${ENABLE_VLESS}"
-        write_param_line "ENABLE_ANYTLS" "${ENABLE_ANYTLS}"
-        write_param_line "VLESS_PORT" "${VLESS_PORT}"
-        write_param_line "WS_PATH" "${WS_PATH}"
-        write_param_line "UUID" "${UUID}"
-        write_param_line "WS_HOST" "${WS_HOST}"
-        write_param_line "ANYTLS_PORT" "${ANYTLS_PORT}"
-        write_param_line "ANYTLS_NAME" "${ANYTLS_NAME}"
-        write_param_line "ANYTLS_PASSWORD" "${ANYTLS_PASSWORD}"
-        write_param_line "SERVER_ADDR" "${SERVER_ADDR}"
-        write_param_line "NODE_NAME" "${NODE_NAME}"
-    } > "$PARAMS_FILE"
+    cat > "$PARAMS_FILE" <<EOF_PARAMS
+ENABLE_VLESS=${ENABLE_VLESS}
+ENABLE_ANYTLS=${ENABLE_ANYTLS}
+VLESS_PORT=${VLESS_PORT}
+WS_PATH=${WS_PATH}
+UUID=${UUID}
+WS_HOST=${WS_HOST}
+ANYTLS_PORT=${ANYTLS_PORT}
+ANYTLS_NAME=${ANYTLS_NAME}
+ANYTLS_PASSWORD=${ANYTLS_PASSWORD}
+SERVER_ADDR=${SERVER_ADDR}
+NODE_NAME=${NODE_NAME}
+EOF_PARAMS
     chmod 600 "$PARAMS_FILE"
 }
 
@@ -589,7 +583,6 @@ start_pre() {
         return 1
     fi
 
-    checkpath -f -m 0644 "${LOG_FILE}"
     ${BIN_FILE} check -c ${CONFIG_FILE}
 }
 
@@ -657,6 +650,10 @@ start_or_restart_service() {
 
     line
     green "正在启动 / 重启 sing-box..."
+
+    mkdir -p "$LOG_DIR"
+    : > "$LOG_FILE"
+
     case "$INIT_SYSTEM" in
         openrc)
             rc-service "$SERVICE_NAME" restart >/dev/null 2>&1 || rc-service "$SERVICE_NAME" start
@@ -815,6 +812,9 @@ restart_singbox_service() {
         fi
     fi
 
+    mkdir -p "$LOG_DIR"
+    : > "$LOG_FILE"
+
     case "$INIT_SYSTEM" in
         openrc) rc-service "$SERVICE_NAME" restart ;;
         systemd) systemctl restart "$SERVICE_NAME" ;;
@@ -951,8 +951,6 @@ create_anytls_node() {
     if ! check_port_available_for_singbox "$ANYTLS_PORT"; then
         return 1
     fi
-
-    ensure_cert_exists
 
     line
     green "正在生成配置..."
