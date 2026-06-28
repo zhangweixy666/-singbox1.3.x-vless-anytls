@@ -10,6 +10,7 @@ BIN_FILE="${INSTALL_DIR}/sing-box"
 
 CLI_NAME="singbox"
 CLI_LINK_PATH="/usr/local/bin/${CLI_NAME}"
+REPO_RAW_URL="${REPO_RAW_URL:-https://raw.githubusercontent.com/yourname/yourrepo/main/singbox-manager.sh}"
 
 CONFIG_DIR="/etc/sing-box"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
@@ -247,30 +248,6 @@ download_singbox() {
 
 ensure_singbox_installed() {
     [ -x "$BIN_FILE" ] || download_singbox
-}
-
-backup_and_clean_old_config() {
-    line
-    green "正在备份旧配置..."
-    mkdir -p "$CONFIG_DIR"
-    BACKUP_DIR="${CONFIG_DIR}/backup-$(date +%Y%m%d-%H%M%S)"
-    mkdir -p "$BACKUP_DIR"
-
-    FOUND_OLD=0
-    for file in "$CONFIG_FILE" "$PARAMS_FILE" "$CERT_FILE" "$KEY_FILE"; do
-        if [ -f "$file" ]; then
-            cp "$file" "$BACKUP_DIR/$(basename "$file").bak"
-            rm -f "$file"
-            FOUND_OLD=1
-        fi
-    done
-
-    if [ "$FOUND_OLD" = "1" ]; then
-        yellow "已备份到: ${BACKUP_DIR}"
-    else
-        rm -rf "$BACKUP_DIR"
-        yellow "未发现旧配置"
-    fi
 }
 
 generate_self_signed_cert() {
@@ -1029,14 +1006,12 @@ install_cli_command() {
     line
     green "正在安装命令入口..."
 
-    SCRIPT_SOURCE="$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")"
-
-    if [ ! -f "$SCRIPT_SOURCE" ]; then
-        red "无法定位当前脚本文件"
+    if ! curl -fL "$REPO_RAW_URL" -o "$CLI_LINK_PATH"; then
+        red "下载脚本失败，请检查 REPO_RAW_URL"
         return 1
     fi
 
-    install -m 755 "$SCRIPT_SOURCE" "$CLI_LINK_PATH"
+    chmod 755 "$CLI_LINK_PATH"
 
     green "命令已安装: ${CLI_LINK_PATH}"
     green "以后可直接输入: ${CLI_NAME}"
