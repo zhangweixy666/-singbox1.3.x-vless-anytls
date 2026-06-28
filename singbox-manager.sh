@@ -20,6 +20,9 @@ CERT_DIR="${CONFIG_DIR}/certs"
 CERT_FILE="${CERT_DIR}/cert.pem"
 KEY_FILE="${CERT_DIR}/key.pem"
 
+LOG_DIR="/var/log/sing-box"
+LOG_FILE="${LOG_DIR}/sing-box.log"
+
 SERVICE_NAME="sing-box"
 OPENRC_SERVICE_FILE="/etc/init.d/${SERVICE_NAME}"
 SYSTEMD_SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
@@ -203,11 +206,17 @@ detect_public_ip() {
     echo ""
 }
 
-read_line() {
+confirm_action() {
     PROMPT_TEXT="$1"
     printf '%s' "$PROMPT_TEXT"
-    IFS= read -r INPUT_VALUE || return 1
-    printf '%s' "$INPUT_VALUE"
+    if ! IFS= read -r INPUT_CONFIRM; then
+        return 1
+    fi
+
+    case "$INPUT_CONFIRM" in
+        y|Y) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 check_port_number() {
@@ -222,19 +231,6 @@ check_port_number() {
         red "端口范围无效: ${PORT_TO_CHECK}"
         exit 1
     fi
-}
-
-check_port_available() {
-    PORT_TO_CHECK="$1"
-    check_port_number "$PORT_TO_CHECK"
-
-    if ss -lntup 2>/dev/null | awk '{print $5}' | grep -Eq "[:.]${PORT_TO_CHECK}$"; then
-        red "端口 ${PORT_TO_CHECK} 已被占用"
-        ss -lntup 2>/dev/null | grep -E "[:.]${PORT_TO_CHECK}[[:space:]]" || true
-        exit 1
-    fi
-
-    green "端口 ${PORT_TO_CHECK} 可用"
 }
 
 check_port_available_for_singbox() {
@@ -438,28 +434,23 @@ json_escape() {
         -e 's/\\/\\\\/g' \
         -e 's/"/\\"/g' \
         -e 's/	/\\t/g' \
-        -e 's/
-/\\r/g' \
+        -e 's/\r/\\r/g' \
         -e ':a;N;$!ba;s/\n/\\n/g'
-}
-
-append_json_string_field() {
-    JSON_KEY="$1"
-    JSON_VALUE="$2"
-    printf '      "%s": "%s"' "$JSON_KEY" "$(json_escape "$JSON_VALUE")"
 }
 
 generate_config_to_file() {
     TARGET_CONFIG_FILE="$1"
 
     mkdir -p "$CONFIG_DIR"
+    mkdir -p "$LOG_DIR"
 
     cat > "$TARGET_CONFIG_FILE" <<EOF_CONF
 {
   "log": {
     "disabled": false,
     "level": "info",
-    "timestamp": true
+    "timestamp": true,
+    "output": "$(json_escape "$LOG_FILE")"
   },
   "inbounds": [
 EOF_CONF
@@ -572,6 +563,8 @@ apply_generated_config() {
 }
 
 create_openrc_service() {
+    mkdir -p "$LOG_DIR"
+
     cat > "$OPENRC_SERVICE_FILE" <<EOF_SERVICE
 #!/sbin/openrc-run
 
@@ -582,6 +575,8 @@ command="${BIN_FILE}"
 command_args="run -c ${CONFIG_FILE}"
 command_background="yes"
 pidfile="/run/sing-box.pid"
+output_log="${LOG_FILE}"
+error_log="${LOG_FILE}"
 
 start_pre() {
     if [ ! -x "${BIN_FILE}" ]; then
@@ -594,6 +589,7 @@ start_pre() {
         return 1
     fi
 
+    checkpath -f -m 0644 "${LOG_FILE}"
     ${BIN_FILE} check -c ${CONFIG_FILE}
 }
 
@@ -608,6 +604,8 @@ EOF_SERVICE
 }
 
 create_systemd_service() {
+    mkdir -p "$LOG_DIR"
+
     cat > "$SYSTEMD_SERVICE_FILE" <<EOF_SERVICE
 [Unit]
 Description=sing-box service
@@ -783,9 +781,11 @@ show_service_logs() {
             journalctl -u "$SERVICE_NAME" -n 50 --no-pager || true
             ;;
         openrc)
-            yellow "OpenRC 环境下未配置统一日志输出"
-            yellow "请先执行: rc-service ${SERVICE_NAME} status"
-            yellow "如需持久日志，建议后续给 sing-box 单独配置日志文件"
+            if [ -f "$LOG_FILE" ]; then
+                tail -n 50 "$LOG_FILE" || true
+            else
+                yellow "日志文件不存在: ${LOG_FILE}"
+            fi
             ;;
     esac
 }
@@ -823,61 +823,49 @@ restart_singbox_service() {
 
 disable_ipv6_persistent() {
     line
-    printf "确认禁用 IPv6？[y/N]: "
-    if ! IFS= read -r INPUT_CONFIRM; then
-        return 1
-    fi
-
-    case "$INPUT_CONFIRM" in
-        y|Y)
-            mkdir -p /etc/sysctl.d
-            cat > "$IPV6_SYSCTL_FILE" <<EOF_IPV6
+    if confirm_action "确认禁用 IPv6？[y/N]: "; then
+        mkdir -p /etc/sysctl.d
+        cat > "$IPV6_SYSCTL_FILE" <<EOF_IPV6
 net.ipv6.conf.all.disable_ipv6 = 1
 net.ipv6.conf.default.disable_ipv6 = 1
 net.ipv6.conf.lo.disable_ipv6 = 1
 EOF_IPV6
-            sysctl -p "$IPV6_SYSCTL_FILE" >/dev/null 2>&1 || true
-            case "$INIT_SYSTEM" in
-                openrc)
-                    rc-update add sysctl boot >/dev/null 2>&1 || true
-                    rc-service sysctl restart >/dev/null 2>&1 || true
-                    ;;
-                systemd)
-                    systemctl restart systemd-sysctl >/dev/null 2>&1 || true
-                    ;;
-            esac
-            green "IPv6 已禁用"
-            ;;
-        *) yellow "已取消" ;;
-    esac
+        sysctl -p "$IPV6_SYSCTL_FILE" >/dev/null 2>&1 || true
+        case "$INIT_SYSTEM" in
+            openrc)
+                rc-update add sysctl boot >/dev/null 2>&1 || true
+                rc-service sysctl restart >/dev/null 2>&1 || true
+                ;;
+            systemd)
+                systemctl restart systemd-sysctl >/dev/null 2>&1 || true
+                ;;
+        esac
+        green "IPv6 已禁用"
+    else
+        yellow "已取消"
+    fi
 }
 
 enable_ipv6_persistent() {
     line
-    printf "确认恢复 IPv6？[y/N]: "
-    if ! IFS= read -r INPUT_CONFIRM; then
-        return 1
+    if confirm_action "确认恢复 IPv6？[y/N]: "; then
+        rm -f "$IPV6_SYSCTL_FILE"
+        sysctl -w net.ipv6.conf.all.disable_ipv6=0 >/dev/null 2>&1 || true
+        sysctl -w net.ipv6.conf.default.disable_ipv6=0 >/dev/null 2>&1 || true
+        sysctl -w net.ipv6.conf.lo.disable_ipv6=0 >/dev/null 2>&1 || true
+        case "$INIT_SYSTEM" in
+            openrc)
+                rc-update add sysctl boot >/dev/null 2>&1 || true
+                rc-service sysctl restart >/dev/null 2>&1 || true
+                ;;
+            systemd)
+                systemctl restart systemd-sysctl >/dev/null 2>&1 || true
+                ;;
+        esac
+        green "IPv6 已恢复"
+    else
+        yellow "已取消"
     fi
-
-    case "$INPUT_CONFIRM" in
-        y|Y)
-            rm -f "$IPV6_SYSCTL_FILE"
-            sysctl -w net.ipv6.conf.all.disable_ipv6=0 >/dev/null 2>&1 || true
-            sysctl -w net.ipv6.conf.default.disable_ipv6=0 >/dev/null 2>&1 || true
-            sysctl -w net.ipv6.conf.lo.disable_ipv6=0 >/dev/null 2>&1 || true
-            case "$INIT_SYSTEM" in
-                openrc)
-                    rc-update add sysctl boot >/dev/null 2>&1 || true
-                    rc-service sysctl restart >/dev/null 2>&1 || true
-                    ;;
-                systemd)
-                    systemctl restart systemd-sysctl >/dev/null 2>&1 || true
-                    ;;
-            esac
-            green "IPv6 已恢复"
-            ;;
-        *) yellow "已取消" ;;
-    esac
 }
 
 prompt_server_or_auto() {
@@ -988,36 +976,34 @@ delete_vless() {
         return
     fi
 
-    INPUT_CONFIRM="$(read_line "确认删除 VLESS + WS 节点？[y/N]: " || true)"
-    case "$INPUT_CONFIRM" in
-        y|Y)
-            stop_service_silent
-            ENABLE_VLESS=0
-            VLESS_PORT=""
-            WS_PATH="$DEFAULT_WS_PATH"
-            UUID=""
-            WS_HOST=""
-            save_params
+    if confirm_action "确认删除 VLESS + WS 节点？[y/N]: "; then
+        stop_service_silent
+        ENABLE_VLESS=0
+        VLESS_PORT=""
+        WS_PATH="$DEFAULT_WS_PATH"
+        UUID=""
+        WS_HOST=""
+        save_params
 
-            if [ "${ENABLE_ANYTLS}" = "1" ]; then
-                line
-                green "正在生成配置..."
-                if ! apply_generated_config; then
-                    red "删除后配置生成失败，请检查参数"
-                    return 1
-                fi
-                create_service
-                start_or_restart_service
-            else
-                rm -f "$CONFIG_FILE"
-                create_service
-                start_or_restart_service
+        if [ "${ENABLE_ANYTLS}" = "1" ]; then
+            line
+            green "正在生成配置..."
+            if ! apply_generated_config; then
+                red "删除后配置生成失败，请检查参数"
+                return 1
             fi
+            create_service
+            start_or_restart_service
+        else
+            rm -f "$CONFIG_FILE"
+            create_service
+            start_or_restart_service
+        fi
 
-            green "VLESS + WS 已删除"
-            ;;
-        *) yellow "已取消" ;;
-    esac
+        green "VLESS + WS 已删除"
+    else
+        yellow "已取消"
+    fi
 }
 
 delete_anytls() {
@@ -1027,62 +1013,59 @@ delete_anytls() {
         return
     fi
 
-    INPUT_CONFIRM="$(read_line "确认删除 AnyTLS 节点？[y/N]: " || true)"
-    case "$INPUT_CONFIRM" in
-        y|Y)
-            stop_service_silent
-            ENABLE_ANYTLS=0
-            ANYTLS_PORT=""
-            ANYTLS_NAME="user"
-            ANYTLS_PASSWORD=""
-            rm -f "$CERT_FILE" "$KEY_FILE"
-            save_params
+    if confirm_action "确认删除 AnyTLS 节点？[y/N]: "; then
+        stop_service_silent
+        ENABLE_ANYTLS=0
+        ANYTLS_PORT=""
+        ANYTLS_NAME="user"
+        ANYTLS_PASSWORD=""
+        rm -f "$CERT_FILE" "$KEY_FILE"
+        save_params
 
-            if [ "${ENABLE_VLESS}" = "1" ]; then
-                line
-                green "正在生成配置..."
-                if ! apply_generated_config; then
-                    red "删除后配置生成失败，请检查参数"
-                    return 1
-                fi
-                create_service
-                start_or_restart_service
-            else
-                rm -f "$CONFIG_FILE"
-                create_service
-                start_or_restart_service
+        if [ "${ENABLE_VLESS}" = "1" ]; then
+            line
+            green "正在生成配置..."
+            if ! apply_generated_config; then
+                red "删除后配置生成失败，请检查参数"
+                return 1
             fi
+            create_service
+            start_or_restart_service
+        else
+            rm -f "$CONFIG_FILE"
+            create_service
+            start_or_restart_service
+        fi
 
-            green "AnyTLS 已删除"
-            ;;
-        *) yellow "已取消" ;;
-    esac
+        green "AnyTLS 已删除"
+    else
+        yellow "已取消"
+    fi
 }
 
 uninstall_all() {
-    INPUT_CONFIRM="$(read_line "确认卸载 sing-box？[y/N]: " || true)"
-    case "$INPUT_CONFIRM" in
-        y|Y)
-            case "$INIT_SYSTEM" in
-                openrc)
-                    rc-service "$SERVICE_NAME" stop >/dev/null 2>&1 || true
-                    rc-update del "$SERVICE_NAME" default >/dev/null 2>&1 || true
-                    rm -f "$OPENRC_SERVICE_FILE"
-                    ;;
-                systemd)
-                    systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
-                    systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
-                    rm -f "$SYSTEMD_SERVICE_FILE"
-                    systemctl daemon-reload >/dev/null 2>&1 || true
-                    ;;
-            esac
-            rm -f "$BIN_FILE"
-            [ -d "$CONFIG_DIR" ] && rm -rf "$CONFIG_DIR"
-            [ -f "$CLI_LINK_PATH" ] && rm -f "$CLI_LINK_PATH"
-            green "已卸载"
-            ;;
-        *) yellow "已取消" ;;
-    esac
+    if confirm_action "确认卸载 sing-box？[y/N]: "; then
+        case "$INIT_SYSTEM" in
+            openrc)
+                rc-service "$SERVICE_NAME" stop >/dev/null 2>&1 || true
+                rc-update del "$SERVICE_NAME" default >/dev/null 2>&1 || true
+                rm -f "$OPENRC_SERVICE_FILE"
+                ;;
+            systemd)
+                systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+                systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+                rm -f "$SYSTEMD_SERVICE_FILE"
+                systemctl daemon-reload >/dev/null 2>&1 || true
+                ;;
+        esac
+        rm -f "$BIN_FILE"
+        [ -d "$CONFIG_DIR" ] && rm -rf "$CONFIG_DIR"
+        [ -d "$LOG_DIR" ] && rm -rf "$LOG_DIR"
+        [ -f "$CLI_LINK_PATH" ] && rm -f "$CLI_LINK_PATH"
+        green "已卸载"
+    else
+        yellow "已取消"
+    fi
 }
 
 install_cli_command() {
