@@ -14,5 +14,4 @@ bash <(wget -qO- https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-v
 
 ### Alpine
 
-apk add --no-cache bash curl
-bash <(curl -fsSL https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-vless-anytls/main/singbox-manager.sh)
+apk add --no-cache bash curl && bash <(curl -fsSL https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-vless-anytls/main/singbox-manager.sh)
