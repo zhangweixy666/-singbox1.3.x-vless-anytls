@@ -10,7 +10,7 @@ BIN_FILE="${INSTALL_DIR}/sing-box"
 
 CLI_NAME="singbox"
 CLI_LINK_PATH="/usr/local/bin/${CLI_NAME}"
-REPO_RAW_URL="${REPO_RAW_URL:-https://raw.githubusercontent.com/yourname/yourrepo/main/singbox-manager.sh}"
+REPO_RAW_URL="${REPO_RAW_URL:-https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-vless-anytls/main/singbox-manager.sh}"
 
 CONFIG_DIR="/etc/sing-box"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
@@ -1027,6 +1027,8 @@ install_only() {
     else
         yellow "当前未配置任何节点，已完成安装，但不会启动 sing-box"
     fi
+
+    install_cli_command || true
 }
 
 exit_with_hint() {
