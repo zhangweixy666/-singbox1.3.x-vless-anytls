@@ -52,7 +52,7 @@ packages(){
 install_binary(){
   install -m 755 "$0" "$SCRIPT" 2>/dev/null || true
   arch_detect
-  if [ "$MUSL" = 1 ]; then suffix="-musl"; else suffix=; fi
+  if [ "$MUSL" = 1 ]; then suffix=-musl; else suffix=; fi
   url="https://github.com/SagerNet/sing-box/releases/download/v$VERSION/sing-box-$VERSION-linux-$ARCH$suffix.tar.gz"
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT INT TERM
@@ -79,13 +79,33 @@ port_check(){
   [ "$1" -ge 1 ] && [ "$1" -le 65535 ] || { red "端口范围无效: $1"; return 1; }
 }
 
+ensure_randoms(){
+  [ -n "$ANYTLS_PASSWORD" ] || ANYTLS_PASSWORD=$(password)
+  [ -n "$TUIC_UUID" ] || TUIC_UUID=$(uuid)
+  [ -n "$TUIC_PASSWORD" ] || TUIC_PASSWORD=$(password)
+  [ -n "$HY2_PASSWORD" ] || HY2_PASSWORD=$(password)
+  [ -n "$VLESS_WS_UUID" ] || VLESS_WS_UUID=$(uuid)
+  [ -n "$REALITY_UUID" ] || REALITY_UUID=$(uuid)
+  [ -n "$REALITY_SHORT_ID" ] || REALITY_SHORT_ID=$(shortid)
+}
+
+reset_protocol_defaults(){
+  case "${1:-}" in
+    anytls) ANYTLS_PASSWORD=$(password) ;;
+    tuic) TUIC_UUID=$(uuid); TUIC_PASSWORD=$(password) ;;
+    hy2) HY2_PASSWORD=$(password) ;;
+    vless_ws) VLESS_WS_UUID=$(uuid) ;;
+    reality) REALITY_UUID=$(uuid); REALITY_SHORT_ID=$(shortid) ;;
+  esac
+}
+
 defaults(){
-  ANYTLS=0; ANYTLS_PORT=8443; ANYTLS_NAME=user; ANYTLS_PASSWORD=""
-  TUIC=0; TUIC_PORT=8444; TUIC_UUID=""; TUIC_PASSWORD=""
-  HY2=0; HY2_PORT=8445; HY2_PASSWORD=""
-  VLESS_WS=0; VLESS_WS_PORT=20008; VLESS_WS_UUID=""; VLESS_WS_PATH=/ws
-  REALITY=0; REALITY_PORT=8446; REALITY_UUID=""; REALITY_SNI=www.microsoft.com; REALITY_SHORT_ID=""
-  SERVER=""; DOMAIN=""; NODE=sing-box-node; CERT_MODE=none
+  ANYTLS=0; ANYTLS_PORT=18443; ANYTLS_NAME=user; ANYTLS_PASSWORD=
+  TUIC=0; TUIC_PORT=18444; TUIC_UUID=; TUIC_PASSWORD=
+  HY2=0; HY2_PORT=18445; HY2_PASSWORD=
+  VLESS_WS=0; VLESS_WS_PORT=20008; VLESS_WS_UUID=; VLESS_WS_PATH=/ws
+  REALITY=0; REALITY_PORT=18446; REALITY_UUID=; REALITY_SNI=www.apple.com; REALITY_SHORT_ID=
+  SERVER=; DOMAIN=; NODE=sing-box-node; CERT_MODE=none
 }
 load(){
   defaults
@@ -231,7 +251,7 @@ ensure_common(){
   load
   ensure_binary
   if [ -z "$SERVER" ]; then
-    _def="$(hostname -i 2>/dev/null | awk '{print $1}')"
+    _def=$(hostname -i 2>/dev/null | awk '{print $1}')
     [ -n "$_def" ] || _def=YOUR_SERVER_IP
     ask_set SERVER "服务器IP/域名 [$_def]: " "$_def"
   fi
@@ -239,6 +259,7 @@ ensure_common(){
 }
 
 apply_config(){
+  ensure_randoms
   generate_config || return 1
   service_create
   service_restart
@@ -250,11 +271,11 @@ status_nodes(){
   line
   printf '当前节点状态:\n'
   printf '服务器: %s | 域名/SNI: %s | 节点名: %s\n' "${SERVER:-未设置}" "${DOMAIN:-未设置}" "$NODE"
-  [ "$ANYTLS" = 1 ] && printf 'AnyTLS     : 开启  端口 %s\n' "$ANYTLS_PORT" || printf 'AnyTLS     : 关闭\n'
-  [ "$TUIC" = 1 ] && printf 'TUIC       : 开启  端口 %s\n' "$TUIC_PORT" || printf 'TUIC       : 关闭\n'
-  [ "$HY2" = 1 ] && printf 'Hysteria2  : 开启  端口 %s\n' "$HY2_PORT" || printf 'Hysteria2  : 关闭\n'
-  [ "$VLESS_WS" = 1 ] && printf 'VLESS+WS   : 开启  端口 %s  path %s\n' "$VLESS_WS_PORT" "$VLESS_WS_PATH" || printf 'VLESS+WS   : 关闭\n'
-  [ "$REALITY" = 1 ] && printf 'VLESS+REALITY: 开启  端口 %s  sni %s\n' "$REALITY_PORT" "$REALITY_SNI" || printf 'VLESS+REALITY: 关闭\n'
+  [ "$ANYTLS" = 1 ] && printf 'AnyTLS        : 开启  端口 %s\n' "$ANYTLS_PORT" || printf 'AnyTLS        : 关闭\n'
+  [ "$TUIC" = 1 ] && printf 'TUIC          : 开启  端口 %s\n' "$TUIC_PORT" || printf 'TUIC          : 关闭\n'
+  [ "$HY2" = 1 ] && printf 'Hysteria2     : 开启  端口 %s\n' "$HY2_PORT" || printf 'Hysteria2     : 关闭\n'
+  [ "$VLESS_WS" = 1 ] && printf 'VLESS+WS      : 开启  端口 %s  path %s\n' "$VLESS_WS_PORT" "$VLESS_WS_PATH" || printf 'VLESS+WS      : 关闭\n'
+  [ "$REALITY" = 1 ] && printf 'VLESS+Reality : 开启  端口 %s  sni %s\n' "$REALITY_PORT" "$REALITY_SNI" || printf 'VLESS+Reality : 关闭\n'
 }
 
 set_common(){
@@ -271,11 +292,11 @@ set_common(){
 cfg_anytls(){
   ensure_common || return 1
   require_cert || return 1
+  reset_protocol_defaults anytls
   ask_set ANYTLS_PORT "AnyTLS端口 [$ANYTLS_PORT]: " "$ANYTLS_PORT"
   port_check "$ANYTLS_PORT" || return 1
   ask_set ANYTLS_NAME "AnyTLS用户名 [$ANYTLS_NAME]: " "$ANYTLS_NAME"
-  _def_pw="$ANYTLS_PASSWORD"; [ -n "$_def_pw" ] || _def_pw="$(password)"
-  ask_set ANYTLS_PASSWORD "AnyTLS密码（留空自动生成）: " "$_def_pw"
+  ask_set ANYTLS_PASSWORD "AnyTLS密码（留空使用随机默认值） [$ANYTLS_PASSWORD]: " "$ANYTLS_PASSWORD"
   ANYTLS=1
   apply_config || return 1
   show_one_link anytls
@@ -283,12 +304,11 @@ cfg_anytls(){
 cfg_tuic(){
   ensure_common || return 1
   require_cert || return 1
+  reset_protocol_defaults tuic
   ask_set TUIC_PORT "TUIC端口 [$TUIC_PORT]: " "$TUIC_PORT"
   port_check "$TUIC_PORT" || return 1
-  _def_uuid="$TUIC_UUID"; [ -n "$_def_uuid" ] || _def_uuid="$(uuid)"
-  ask_set TUIC_UUID "TUIC UUID（留空自动生成）: " "$_def_uuid"
-  _def_pw="$TUIC_PASSWORD"; [ -n "$_def_pw" ] || _def_pw="$(password)"
-  ask_set TUIC_PASSWORD "TUIC密码（留空自动生成）: " "$_def_pw"
+  ask_set TUIC_UUID "TUIC UUID（留空使用随机默认值） [$TUIC_UUID]: " "$TUIC_UUID"
+  ask_set TUIC_PASSWORD "TUIC密码（留空使用随机默认值） [$TUIC_PASSWORD]: " "$TUIC_PASSWORD"
   TUIC=1
   apply_config || return 1
   show_one_link tuic
@@ -296,37 +316,53 @@ cfg_tuic(){
 cfg_hy2(){
   ensure_common || return 1
   require_cert || return 1
+  reset_protocol_defaults hy2
   ask_set HY2_PORT "Hysteria2端口 [$HY2_PORT]: " "$HY2_PORT"
   port_check "$HY2_PORT" || return 1
-  _def_pw="$HY2_PASSWORD"; [ -n "$_def_pw" ] || _def_pw="$(password)"
-  ask_set HY2_PASSWORD "Hysteria2密码（留空自动生成）: " "$_def_pw"
+  ask_set HY2_PASSWORD "Hysteria2密码（留空使用随机默认值） [$HY2_PASSWORD]: " "$HY2_PASSWORD"
   HY2=1
   apply_config || return 1
   show_one_link hy2
 }
 cfg_vless_ws(){
   ensure_common || return 1
+  reset_protocol_defaults vless_ws
   ask_set VLESS_WS_PORT "VLESS WS端口 [$VLESS_WS_PORT]: " "$VLESS_WS_PORT"
   port_check "$VLESS_WS_PORT" || return 1
-  _def_uuid="$VLESS_WS_UUID"; [ -n "$_def_uuid" ] || _def_uuid="$(uuid)"
-  ask_set VLESS_WS_UUID "VLESS WS UUID（留空自动生成）: " "$_def_uuid"
+  ask_set VLESS_WS_UUID "VLESS WS UUID（留空使用随机默认值） [$VLESS_WS_UUID]: " "$VLESS_WS_UUID"
   ask_set VLESS_WS_PATH "WS路径 [$VLESS_WS_PATH]: " "$VLESS_WS_PATH"
-  VLESS_WS_PATH="$(path_norm "$VLESS_WS_PATH")"
+  VLESS_WS_PATH=$(path_norm "$VLESS_WS_PATH")
   VLESS_WS=1
   apply_config || return 1
   show_one_link vless_ws
 }
 cfg_reality(){
   ensure_common || return 1
+  reset_protocol_defaults reality
   ask_set REALITY_PORT "Reality端口 [$REALITY_PORT]: " "$REALITY_PORT"
   port_check "$REALITY_PORT" || return 1
-  _def_uuid="$REALITY_UUID"; [ -n "$_def_uuid" ] || _def_uuid="$(uuid)"
-  ask_set REALITY_UUID "Reality UUID（留空自动生成）: " "$_def_uuid"
+  ask_set REALITY_UUID "Reality UUID（留空使用随机默认值） [$REALITY_UUID]: " "$REALITY_UUID"
   ask_set REALITY_SNI "Reality SNI [$REALITY_SNI]: " "$REALITY_SNI"
   reality_keys
   REALITY=1
   apply_config || return 1
   show_one_link reality
+}
+
+regen_random_current(){
+  load
+  [ "$ANYTLS" = 1 ] && ANYTLS_PASSWORD=$(password)
+  [ "$TUIC" = 1 ] && TUIC_UUID=$(uuid) && TUIC_PASSWORD=$(password)
+  [ "$HY2" = 1 ] && HY2_PASSWORD=$(password)
+  [ "$VLESS_WS" = 1 ] && VLESS_WS_UUID=$(uuid)
+  if [ "$REALITY" = 1 ]; then
+    REALITY_UUID=$(uuid)
+    REALITY_SHORT_ID=$(shortid)
+  fi
+  reality_keys
+  apply_config
+  green '已为当前启用协议重置随机参数'
+  links
 }
 
 disable_node(){
@@ -343,7 +379,7 @@ disable_node(){
     0) return ;;
     *) yellow '无效选项'; return ;;
   esac
-  if [ "$ANYTLS$TUIC$HY2$VLESS_WS$REALITY" = "00000" ]; then
+  if [ "$ANYTLS$TUIC$HY2$VLESS_WS$REALITY" = 00000 ]; then
     yellow '已关闭全部节点，停止服务'
     save
     if [ "$INIT" = openrc ]; then rc-service sing-box stop >/dev/null 2>&1 || true
@@ -356,48 +392,273 @@ disable_node(){
   green '节点已关闭并应用'
 }
 
-add(){ [ "$written" = 0 ] || printf ',\n' >> "$TMP"; cat >> "$TMP"; written=1; }
+json_log(){
+  cat <<EOF
+  "log": {
+    "level": "info",
+    "timestamp": true,
+    "output": "$LOG"
+  }
+EOF
+}
+
+inbound_anytls(){
+  cat <<EOF
+    {
+      "type": "anytls",
+      "tag": "anytls-in",
+      "listen": "::",
+      "listen_port": $ANYTLS_PORT,
+      "users": [
+        {
+          "name": "$(escape "$ANYTLS_NAME")",
+          "password": "$(escape "$ANYTLS_PASSWORD")"
+        }
+      ],
+      "padding_scheme": [],
+      "tls": {
+        "enabled": true,
+        "server_name": "$(escape "$DOMAIN")",
+        "certificate_path": "$CERT",
+        "key_path": "$KEY"
+      }
+    }
+EOF
+}
+inbound_tuic(){
+  cat <<EOF
+    {
+      "type": "tuic",
+      "tag": "tuic-in",
+      "listen": "::",
+      "listen_port": $TUIC_PORT,
+      "users": [
+        {
+          "uuid": "$TUIC_UUID",
+          "password": "$(escape "$TUIC_PASSWORD")"
+        }
+      ],
+      "congestion_control": "bbr",
+      "tls": {
+        "enabled": true,
+        "server_name": "$(escape "$DOMAIN")",
+        "certificate_path": "$CERT",
+        "key_path": "$KEY"
+      }
+    }
+EOF
+}
+inbound_hy2(){
+  cat <<EOF
+    {
+      "type": "hysteria2",
+      "tag": "hy2-in",
+      "listen": "::",
+      "listen_port": $HY2_PORT,
+      "users": [
+        {
+          "password": "$(escape "$HY2_PASSWORD")"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "$(escape "$DOMAIN")",
+        "certificate_path": "$CERT",
+        "key_path": "$KEY"
+      }
+    }
+EOF
+}
+inbound_vless_ws(){
+  cat <<EOF
+    {
+      "type": "vless",
+      "tag": "ws-in",
+      "listen": "::",
+      "listen_port": $VLESS_WS_PORT,
+      "users": [
+        {
+          "uuid": "$VLESS_WS_UUID"
+        }
+      ],
+      "transport": {
+        "type": "ws",
+        "path": "$(escape "$VLESS_WS_PATH")",
+        "early_data_header_name": "Sec-WebSocket-Protocol"
+      }
+    }
+EOF
+}
+inbound_reality(){
+  cat <<EOF
+    {
+      "type": "vless",
+      "tag": "reality-in",
+      "listen": "::",
+      "listen_port": $REALITY_PORT,
+      "users": [
+        {
+          "uuid": "$REALITY_UUID",
+          "flow": "xtls-rprx-vision"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "$(escape "$REALITY_SNI")",
+        "reality": {
+          "enabled": true,
+          "handshake": {
+            "server": "$(escape "$REALITY_SNI")",
+            "server_port": 443
+          },
+          "private_key": "$(cat "$REALITY_DIR/private.key")",
+          "short_id": [
+            "$REALITY_SHORT_ID"
+          ]
+        }
+      }
+    }
+EOF
+}
+
 generate_config(){
   TMP="$CFG.tmp.$$"
   mkdir -p "$CFG_DIR" "$LOG_DIR"
-  written=0
-  cat > "$TMP" <<EOF
-{
-  "log": {"disabled": false, "level": "info", "timestamp": true, "output": "$LOG"},
-  "inbounds": [
-EOF
-  if [ "$ANYTLS" = 1 ]; then
-    add <<EOF
-    {"type":"anytls","tag":"anytls-in","listen":"::","listen_port":$ANYTLS_PORT,"users":[{"name":"$(escape "$ANYTLS_NAME")","password":"$(escape "$ANYTLS_PASSWORD")"}],"padding_scheme":[],"tls":{"enabled":true,"server_name":"$(escape "$DOMAIN")","certificate_path":"$CERT","key_path":"$KEY"}}
-EOF
-  fi
-  if [ "$TUIC" = 1 ]; then
-    add <<EOF
-    {"type":"tuic","tag":"tuic-in","listen":"::","listen_port":$TUIC_PORT,"users":[{"uuid":"$TUIC_UUID","password":"$(escape "$TUIC_PASSWORD")"}],"congestion_control":"bbr","tls":{"enabled":true,"server_name":"$(escape "$DOMAIN")","certificate_path":"$CERT","key_path":"$KEY"}}
-EOF
-  fi
-  if [ "$HY2" = 1 ]; then
-    add <<EOF
-    {"type":"hysteria2","tag":"hy2-in","listen":"::","listen_port":$HY2_PORT,"users":[{"password":"$(escape "$HY2_PASSWORD")"}],"tls":{"enabled":true,"server_name":"$(escape "$DOMAIN")","certificate_path":"$CERT","key_path":"$KEY"}}
-EOF
-  fi
-  if [ "$VLESS_WS" = 1 ]; then
-    add <<EOF
-    {"type":"vless","tag":"vless-ws-in","listen":"::","listen_port":$VLESS_WS_PORT,"users":[{"uuid":"$VLESS_WS_UUID"}],"transport":{"type":"ws","path":"$(escape "$VLESS_WS_PATH")","early_data_header_name":"Sec-WebSocket-Protocol"}}
-EOF
-  fi
-  if [ "$REALITY" = 1 ]; then
-    add <<EOF
-    {"type":"vless","tag":"vless-reality-in","listen":"::","listen_port":$REALITY_PORT,"users":[{"uuid":"$REALITY_UUID","flow":"xtls-rprx-vision"}],"tls":{"enabled":true,"server_name":"$(escape "$REALITY_SNI")","reality":{"enabled":true,"handshake":{"server":"$(escape "$REALITY_SNI")","server_port":443},"private_key":"$(cat "$REALITY_DIR/private.key")","short_id":["$REALITY_SHORT_ID"]}}}
-EOF
-  fi
-  [ "$written" = 1 ] || { rm -f "$TMP"; red '没有启用节点'; return 1; }
-  cat >> "$TMP" <<EOF
-  ],
-  "outbounds":[{"type":"direct","tag":"direct"}],
-  "route":{"final":"direct"}
+  [ "$ANYTLS$TUIC$HY2$VLESS_WS$REALITY" != 00000 ] || { red '没有启用节点'; return 1; }
+
+  python3 - "$TMP" <<PY
+import json
+import pathlib
+import sys
+
+out = pathlib.Path(sys.argv[1])
+config = {
+    "log": {
+        "level": "info",
+        "timestamp": True,
+        "output": "$LOG",
+    },
+    "inbounds": [],
+    "outbounds": [
+        {
+            "type": "direct",
+            "tag": "direct",
+        }
+    ],
+    "route": {
+        "final": "direct",
+    },
 }
-EOF
+
+if "$VLESS_WS" == "1":
+    config["inbounds"].append({
+        "type": "vless",
+        "tag": "ws-in",
+        "listen": "::",
+        "listen_port": int("$VLESS_WS_PORT"),
+        "users": [
+            {
+                "uuid": "$VLESS_WS_UUID",
+            }
+        ],
+        "transport": {
+            "type": "ws",
+            "path": "$VLESS_WS_PATH",
+            "early_data_header_name": "Sec-WebSocket-Protocol",
+        },
+    })
+
+if "$REALITY" == "1":
+    private_key = pathlib.Path("$REALITY_DIR/private.key").read_text().strip()
+    config["inbounds"].append({
+        "type": "vless",
+        "tag": "reality-in",
+        "listen": "::",
+        "listen_port": int("$REALITY_PORT"),
+        "users": [
+            {
+                "uuid": "$REALITY_UUID",
+                "flow": "xtls-rprx-vision",
+            }
+        ],
+        "tls": {
+            "enabled": True,
+            "server_name": "$REALITY_SNI",
+            "reality": {
+                "enabled": True,
+                "handshake": {
+                    "server": "$REALITY_SNI",
+                    "server_port": 443,
+                },
+                "private_key": private_key,
+                "short_id": ["$REALITY_SHORT_ID"],
+            },
+        },
+    })
+
+if "$ANYTLS" == "1":
+    config["inbounds"].append({
+        "type": "anytls",
+        "tag": "anytls-in",
+        "listen": "::",
+        "listen_port": int("$ANYTLS_PORT"),
+        "users": [
+            {
+                "name": "$ANYTLS_NAME",
+                "password": "$ANYTLS_PASSWORD",
+            }
+        ],
+        "padding_scheme": [],
+        "tls": {
+            "enabled": True,
+            "server_name": "$DOMAIN",
+            "certificate_path": "$CERT",
+            "key_path": "$KEY",
+        },
+    })
+
+if "$HY2" == "1":
+    config["inbounds"].append({
+        "type": "hysteria2",
+        "tag": "hy2-in",
+        "listen": "::",
+        "listen_port": int("$HY2_PORT"),
+        "users": [
+            {
+                "password": "$HY2_PASSWORD",
+            }
+        ],
+        "tls": {
+            "enabled": True,
+            "server_name": "$DOMAIN",
+            "certificate_path": "$CERT",
+            "key_path": "$KEY",
+        },
+    })
+
+if "$TUIC" == "1":
+    config["inbounds"].append({
+        "type": "tuic",
+        "tag": "tuic-in",
+        "listen": "::",
+        "listen_port": int("$TUIC_PORT"),
+        "users": [
+            {
+                "uuid": "$TUIC_UUID",
+                "password": "$TUIC_PASSWORD",
+            }
+        ],
+        "congestion_control": "bbr",
+        "tls": {
+            "enabled": True,
+            "server_name": "$DOMAIN",
+            "certificate_path": "$CERT",
+            "key_path": "$KEY",
+        },
+    })
+
+out.write_text(json.dumps(config, ensure_ascii=True, indent=2) + chr(10))
+PY
   "$BIN" check -c "$TMP"
   mv "$TMP" "$CFG"
   chmod 600 "$CFG"
@@ -467,7 +728,7 @@ links(){
   [ "$HY2" = 1 ] && printf 'hysteria2://%s@%s:%s/?sni=%s#%s-hy2\n' "$HY2_PASSWORD" "$host" "$HY2_PORT" "$DOMAIN" "$NODE"
   [ "$VLESS_WS" = 1 ] && printf 'vless://%s@%s:%s?encryption=none&security=none&type=ws&path=%s#%s-vless-ws\n' "$VLESS_WS_UUID" "$host" "$VLESS_WS_PORT" "$(printf '%s' "$VLESS_WS_PATH" | sed 's#/#%2F#g')" "$NODE"
   [ "$REALITY" = 1 ] && [ -s "$REALITY_DIR/public.key" ] && printf 'vless://%s@%s:%s?encryption=none&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp&flow=xtls-rprx-vision#%s-reality\n' "$REALITY_UUID" "$host" "$REALITY_PORT" "$REALITY_SNI" "$(cat "$REALITY_DIR/public.key")" "$REALITY_SHORT_ID" "$NODE"
-  if [ "$ANYTLS$TUIC$HY2$VLESS_WS$REALITY" = "00000" ]; then yellow '当前没有启用任何节点'; fi
+  if [ "$ANYTLS$TUIC$HY2$VLESS_WS$REALITY" = 00000 ]; then yellow '当前没有启用任何节点'; fi
 }
 
 node_menu(){
@@ -484,6 +745,7 @@ node_menu(){
     printf '7) 关闭指定节点\n'
     printf '8) 查看节点链接\n'
     printf '9) 应用现有参数并重启\n'
+    printf '10) 重置当前节点随机参数\n'
     printf '0) 返回\n'
     printf '选择: '
     IFS= read -r c || return
@@ -497,6 +759,7 @@ node_menu(){
       7) disable_node ;;
       8) links ;;
       9) load; apply_config; links ;;
+      10) regen_random_current ;;
       0) return ;;
       *) yellow '无效选项' ;;
     esac
@@ -562,6 +825,7 @@ main(){
     restart) service_restart ;;
     logs) tail -n 100 "$LOG" 2>/dev/null || true ;;
     status) status_nodes ;;
+    regen|regen-random) regen_random_current ;;
     *) menu ;;
   esac
 }
