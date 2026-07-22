@@ -454,7 +454,7 @@ show_one_link(){
     anytls) [ "$ANYTLS" = 1 ] && printf 'anytls://%s@%s:%s/?sni=%s#%s-anytls\n' "$ANYTLS_PASSWORD" "$host" "$ANYTLS_PORT" "$DOMAIN" "$NODE" ;;
     tuic) [ "$TUIC" = 1 ] && printf 'tuic://%s:%s@%s:%s?sni=%s&congestion_control=bbr#%s-tuic\n' "$TUIC_UUID" "$TUIC_PASSWORD" "$host" "$TUIC_PORT" "$DOMAIN" "$NODE" ;;
     hy2) [ "$HY2" = 1 ] && printf 'hysteria2://%s@%s:%s/?sni=%s#%s-hy2\n' "$HY2_PASSWORD" "$host" "$HY2_PORT" "$DOMAIN" "$NODE" ;;
-    vless_ws) [ "$VLESS_WS" = 1 ] && printf 'vless://%s@%s:%s?encryption=none&security=none&type=ws&path=%s&host=%s#%s-vless-ws\n' "$VLESS_WS_UUID" "$host" "$VLESS_WS_PORT" "$(printf '%s' "$VLESS_WS_PATH" | sed 's#/#%2F#g')" "${DOMAIN:-$host}" "$NODE" ;;
+    vless_ws) [ "$VLESS_WS" = 1 ] && printf 'vless://%s@%s:%s?encryption=none&security=none&type=ws&path=%s#%s-vless-ws\n' "$VLESS_WS_UUID" "$host" "$VLESS_WS_PORT" "$(printf '%s' "$VLESS_WS_PATH" | sed 's#/#%2F#g')" "$NODE" ;;
     reality) [ "$REALITY" = 1 ] && [ -s "$REALITY_DIR/public.key" ] && printf 'vless://%s@%s:%s?encryption=none&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp&flow=xtls-rprx-vision#%s-reality\n' "$REALITY_UUID" "$host" "$REALITY_PORT" "$REALITY_SNI" "$(cat "$REALITY_DIR/public.key")" "$REALITY_SHORT_ID" "$NODE" ;;
   esac
 }
@@ -465,7 +465,7 @@ links(){
   [ "$ANYTLS" = 1 ] && printf 'anytls://%s@%s:%s/?sni=%s#%s-anytls\n' "$ANYTLS_PASSWORD" "$host" "$ANYTLS_PORT" "$DOMAIN" "$NODE"
   [ "$TUIC" = 1 ] && printf 'tuic://%s:%s@%s:%s?sni=%s&congestion_control=bbr#%s-tuic\n' "$TUIC_UUID" "$TUIC_PASSWORD" "$host" "$TUIC_PORT" "$DOMAIN" "$NODE"
   [ "$HY2" = 1 ] && printf 'hysteria2://%s@%s:%s/?sni=%s#%s-hy2\n' "$HY2_PASSWORD" "$host" "$HY2_PORT" "$DOMAIN" "$NODE"
-  [ "$VLESS_WS" = 1 ] && printf 'vless://%s@%s:%s?encryption=none&security=none&type=ws&path=%s&host=%s#%s-vless-ws\n' "$VLESS_WS_UUID" "$host" "$VLESS_WS_PORT" "$(printf '%s' "$VLESS_WS_PATH" | sed 's#/#%2F#g')" "${DOMAIN:-$host}" "$NODE"
+  [ "$VLESS_WS" = 1 ] && printf 'vless://%s@%s:%s?encryption=none&security=none&type=ws&path=%s#%s-vless-ws\n' "$VLESS_WS_UUID" "$host" "$VLESS_WS_PORT" "$(printf '%s' "$VLESS_WS_PATH" | sed 's#/#%2F#g')" "$NODE"
   [ "$REALITY" = 1 ] && [ -s "$REALITY_DIR/public.key" ] && printf 'vless://%s@%s:%s?encryption=none&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp&flow=xtls-rprx-vision#%s-reality\n' "$REALITY_UUID" "$host" "$REALITY_PORT" "$REALITY_SNI" "$(cat "$REALITY_DIR/public.key")" "$REALITY_SHORT_ID" "$NODE"
   if [ "$ANYTLS$TUIC$HY2$VLESS_WS$REALITY" = "00000" ]; then yellow '当前没有启用任何节点'; fi
 }
