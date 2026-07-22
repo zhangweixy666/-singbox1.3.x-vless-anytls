@@ -73,6 +73,7 @@ uuid(){ cat /proc/sys/kernel/random/uuid 2>/dev/null || openssl rand -hex 16; }
 password(){ tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32; }
 shortid(){ openssl rand -hex 8; }
 path_norm(){ case "$1" in /*) printf '%s' "$1";; *) printf '/%s' "$1";; esac; }
+fmt_host(){ case "$1" in *:*) printf '[%s]' "$1" ;; *) printf '%s' "$1" ;; esac; }
 port_check(){
   case "$1" in ''|*[!0-9]*) red "端口无效: $1"; return 1;; esac
   [ "$1" -ge 1 ] && [ "$1" -le 65535 ] || { red "端口范围无效: $1"; return 1; }
@@ -401,8 +402,8 @@ manual_one(){
   host=${SERVER:-YOUR_SERVER_IP}
   case "$1" in
     anytls) [ "$ANYTLS" = 1 ] || return 0; printf 'AnyTLS 手填参数\n地址: %s\n端口: %s\n密码: %s\nSNI: %s\n' "$host" "$ANYTLS_PORT" "$ANYTLS_PASSWORD" "$DOMAIN" ;;
-    tuic) [ "$TUIC" = 1 ] || return 0; printf 'TUIC 手填参数\n地址: %s\n端口: %s\nUUID: %s\n密码: %s\nSNI: %s\nALPN: h3\n拥塞控制: bbr\n认证超时: 3s\nZero RTT: false\n心跳: 10s\n' "$host" "$TUIC_PORT" "$TUIC_UUID" "$TUIC_PASSWORD" "$DOMAIN" ;;
-    hy2) [ "$HY2" = 1 ] || return 0; printf 'Hysteria2 手填参数\n地址: %s\n端口: %s\n密码: %s\n混淆: salamander\n混淆密码: %s\nALPN: h3\n' "$host" "$HY2_PORT" "$HY2_PASSWORD" "$HY2_PASSWORD" ;;
+    tuic) [ "$TUIC" = 1 ] || return 0; printf 'TUIC 手填参数\n地址: %s\n端口: %s\nUUID: %s\n密码: %s\nSNI: %s\nALPN: h3\ncongestion_control: bbr\ncongestion_controller: bbr\nudp_relay_mode: native\nversion: 5\n' "$(fmt_host "$host")" "$TUIC_PORT" "$TUIC_UUID" "$TUIC_PASSWORD" "$DOMAIN" ;;
+    hy2) [ "$HY2" = 1 ] || return 0; printf 'Hysteria2 手填参数\n地址: %s\n端口: %s\n密码: %s\nobfs: salamander\nobfs-password: %s\nsni: %s\n' "$(fmt_host "$host")" "$HY2_PORT" "$HY2_PASSWORD" "$HY2_PASSWORD" "$DOMAIN" ;;
     vless_ws) [ "$VLESS_WS" = 1 ] || return 0; printf 'VLESS+WS 手填参数\n地址: %s\n端口: %s\nUUID: %s\n传输: ws\n路径: %s\nTLS: false\n' "$host" "$VLESS_WS_PORT" "$VLESS_WS_UUID" "$VLESS_WS_PATH" ;;
     vmess_ws) [ "$VMESS_WS" = 1 ] || return 0; printf 'VMess+WS 手填参数\n地址: %s\n端口: %s\nUUID: %s\nalterId: 0\n传输: ws\n路径: %s\nTLS: false\n' "$host" "$VMESS_WS_PORT" "$VMESS_WS_UUID" "$VMESS_WS_PATH" ;;
     reality) [ "$REALITY" = 1 ] || return 0; printf 'Reality 手填参数\n地址: %s\n端口: %s\nUUID: %s\nSNI: %s\nPublicKey: %s\nShortID: %s\nFlow: xtls-rprx-vision\n' "$host" "$REALITY_PORT" "$REALITY_UUID" "$REALITY_SNI" "$(cat "$REALITY_DIR/public.key")" "$REALITY_SHORT_ID" ;;
@@ -426,8 +427,8 @@ links(){
   host=${SERVER:-YOUR_SERVER_IP}
   printf '\n已启用节点链接:\n'
   [ "$ANYTLS" = 1 ] && printf 'anytls://%s@%s:%s/?sni=%s#%s-anytls\n' "$ANYTLS_PASSWORD" "$host" "$ANYTLS_PORT" "$DOMAIN" "$NODE"
-  [ "$TUIC" = 1 ] && printf 'tuic://%s:%s@%s:%s?sni=%s&congestion_control=bbr#%s-tuic\n' "$TUIC_UUID" "$TUIC_PASSWORD" "$host" "$TUIC_PORT" "$DOMAIN" "$NODE"
-  [ "$HY2" = 1 ] && printf 'hysteria2://%s@%s:%s/?sni=%s#%s-hy2\n' "$HY2_PASSWORD" "$host" "$HY2_PORT" "$DOMAIN" "$NODE"
+  [ "$TUIC" = 1 ] && printf 'tuic://%s:%s@%s:%s?alpn=h3&congestion_control=bbr&congestion_controller=bbr&sni=%s&udp_relay_mode=native&version=5#TUIC%%20%s\n' "$TUIC_UUID" "$TUIC_PASSWORD" "$(fmt_host "$host")" "$TUIC_PORT" "$DOMAIN" "$NODE"
+  [ "$HY2" = 1 ] && printf 'hysteria2://%s@%s:%s/?obfs=salamander&obfs-password=%s&sni=%s#%s\n' "$HY2_PASSWORD" "$(fmt_host "$host")" "$HY2_PORT" "$HY2_PASSWORD" "$DOMAIN" "$NODE"
   [ "$VLESS_WS" = 1 ] && printf 'vless://%s@%s:%s?encryption=none&security=none&type=ws&path=%s#%s-vless-ws\n' "$VLESS_WS_UUID" "$host" "$VLESS_WS_PORT" "$(printf '%s' "$VLESS_WS_PATH" | sed 's#/#%2F#g')" "$NODE"
   [ "$VMESS_WS" = 1 ] && printf 'vmess://%s@%s:%s?type=ws&path=%s&security=none&alterId=0#%s-vmess-ws\n' "$VMESS_WS_UUID" "$host" "$VMESS_WS_PORT" "$(printf '%s' "$VMESS_WS_PATH" | sed 's#/#%2F#g')" "$NODE"
   [ "$REALITY" = 1 ] && [ -s "$REALITY_DIR/public.key" ] && printf 'vless://%s@%s:%s?encryption=none&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp&flow=xtls-rprx-vision#%s-reality\n' "$REALITY_UUID" "$host" "$REALITY_PORT" "$REALITY_SNI" "$(cat "$REALITY_DIR/public.key")" "$REALITY_SHORT_ID" "$NODE"
