@@ -336,6 +336,9 @@ PY
 }
 
 service_create(){
+  mkdir -p "$LOG_DIR"
+  chmod 750 "$LOG_DIR"
+
   if [ "$INIT" = openrc ]; then
     cat > "$SERVICE_FILE" <<EOF
 #!/sbin/openrc-run
