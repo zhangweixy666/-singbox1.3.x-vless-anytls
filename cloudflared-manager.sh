@@ -5,6 +5,7 @@ set -eu
 umask 077
 
 VERSION=1.1.0
+CLOUDFLARED_VERSION=2026.8.2
 CF_DIR=/root/.cloudflared
 CF_CONFIG=$CF_DIR/config.yml
 CF_ENV=/etc/cloudflared-manager.env
@@ -163,8 +164,14 @@ install_cloudflared(){
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT INT TERM
   curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-    "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$asset" \
+    "https://github.com/cloudflare/cloudflared/releases/download/$CLOUDFLARED_VERSION/cloudflared-linux-$asset" \
     -o "$tmp/cloudflared"
+  chmod 755 "$tmp/cloudflared"
+  installed_version=$("$tmp/cloudflared" version | awk 'NR == 1 { print $3; exit }')
+  [ "$installed_version" = "$CLOUDFLARED_VERSION" ] || {
+    red "cloudflared 版本校验失败: 期望 $CLOUDFLARED_VERSION，实际 ${installed_version:-未知}"
+    return 1
+  }
   install -m 755 "$tmp/cloudflared" "$CF_BIN"
   trap - EXIT INT TERM
   rm -rf "$tmp"
