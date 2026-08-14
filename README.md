@@ -65,3 +65,35 @@ cloudflared-manager.sh links
 7. 通过监督脚本在 cloudflared 退出后自动重启。
 
 Cloudflare Tunnel 对外固定使用 HTTPS 443；本地回源可配置为 sing-box 的 VLESS/WS 或 VMess/WS 监听端口。
+
+## 从头开始：删除全部 Cloudflare Tunnel
+
+如果需要清空当前 Cloudflare 账号下的全部 Tunnel 并重新配置，可使用：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-vless-anytls/main/cloudflared-reset-all.sh -o /tmp/cloudflared-reset-all.sh
+chmod +x /tmp/cloudflared-reset-all.sh
+/tmp/cloudflared-reset-all.sh
+```
+
+脚本会：
+
+- 停止本机 cloudflared 服务和相关进程；
+- 删除当前账号下列出的全部 Cloudflare Tunnel；
+- 清理本机 Tunnel 配置、JSON 凭据、服务文件、监督脚本和日志；
+- 保留 Cloudflare 授权证书 `~/.cloudflared/cert.pem`；
+- 不删除 sing-box 配置、节点参数或证书。
+
+默认需要输入：
+
+```text
+DELETE-ALL-TUNNELS
+```
+
+确认后才会执行。确认无误后也可使用：
+
+```bash
+/tmp/cloudflared-reset-all.sh --yes
+```
+
+注意：删除操作不可逆；DNS 记录需要使用 `cloudflared tunnel route dns` 或 Cloudflare API 单独清理。
