@@ -23,6 +23,8 @@ README 的命令按“一个代码块一个命令”排列，便于直接复制�
 - 支持 cloudflared 崩溃后自动重启。
 - 支持 Tunnel 创建、选择、Ingress 配置、DNS 路由和状态检查。
 - 支持删除全部 Tunnel 后重新开始。
+- 已验证 Cloudflare Tunnel 公网 HTTPS 到本地 WebSocket 的完整链路。
+- 服务生成时自动创建 sing-box 日志目录，避免日志路径不存在导致服务启动失败。
 
 ## 🧩 功能概览
 
