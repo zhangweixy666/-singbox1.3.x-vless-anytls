@@ -39,7 +39,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-
 `cloudflared-manager.sh` 提供 Cloudflare Tunnel 的完整管理流程：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-vless-anytls/feature/cloudflared-tunnel-supervisor/cloudflared-manager.sh -o /usr/local/bin/cloudflared-manager.sh
+curl -fsSL https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-vless-anytls/main/cloudflared-manager.sh -o /usr/local/bin/cloudflared-manager.sh
 chmod +x /usr/local/bin/cloudflared-manager.sh
 /usr/local/bin/cloudflared-manager.sh guided
 ```
