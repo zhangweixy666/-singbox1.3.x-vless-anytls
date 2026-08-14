@@ -1,5 +1,6 @@
 #!/bin/sh
-# sing-box manager: POSIX shell, no eval/source of user-controlled files.
+# sing-box manager for Alpine/OpenRC and Debian/systemd.
+# Configuration files are parsed as data; user input is never eval'd.
 set -eu
 umask 077
 
@@ -24,9 +25,7 @@ green(){ printf '\033[32m%s\033[0m\n' "$*"; }
 yellow(){ printf '\033[33m%s\033[0m\n' "$*"; }
 line(){ printf '%s\n' '------------------------------------------------------------'; }
 
-root_check(){
-  [ "$(id -u)" = 0 ] || { red '请使用 root 运行'; exit 1; }
-}
+root_check(){ [ "$(id -u)" = 0 ] || { red '请使用 root 运行'; exit 1; }; }
 
 detect_os(){
   if [ -f /etc/alpine-release ]; then
@@ -49,9 +48,9 @@ install_packages(){
 
 arch_name(){
   case "$(uname -m)" in
-    x86_64) printf amd64;;
-    aarch64|arm64) printf arm64;;
-    armv7l) printf armv7;;
+    x86_64) printf '%s\n' amd64;;
+    aarch64|arm64) printf '%s\n' arm64;;
+    armv7l) printf '%s\n' armv7;;
     *) return 1;;
   esac
 }
@@ -75,7 +74,6 @@ install_binary(){
 }
 
 ensure_binary(){ [ -x "$BIN" ] || install_binary; }
-
 uuid(){ cat /proc/sys/kernel/random/uuid 2>/dev/null || openssl rand -hex 16; }
 random_password(){ od -An -N24 -tx1 /dev/urandom | tr -d ' \n' | cut -c1-32; }
 short_id(){ openssl rand -hex 8; }
@@ -90,7 +88,7 @@ defaults(){
   SERVER=; DOMAIN=; NODE=sing-box-node; CERT_MODE=none
 }
 
-# Explicit allow-list parser: values are data, never shell code.
+# Explicit allow-list parser: values remain data and are never executed.
 set_param(){
   case "$1" in
     ANYTLS) ANYTLS=$2;; ANYTLS_PORT) ANYTLS_PORT=$2;;
@@ -99,7 +97,7 @@ set_param(){
     HY2) HY2=$2;; HY2_PORT) HY2_PORT=$2;; HY2_PASSWORD) HY2_PASSWORD=$2;;
     VLESS_WS) VLESS_WS=$2;; VLESS_WS_PORT) VLESS_WS_PORT=$2;; VLESS_WS_UUID) VLESS_WS_UUID=$2;; VLESS_WS_PATH) VLESS_WS_PATH=$2;;
     VMESS_WS) VMESS_WS=$2;; VMESS_WS_PORT) VMESS_WS_PORT=$2;; VMESS_WS_UUID) VMESS_WS_UUID=$2;; VMESS_WS_PATH) VMESS_WS_PATH=$2;;
-    REALITY) REALITY=$2;; REALITY_PORT) REALITY_PORT=$2;; REALITY_UUID) REALITY_UUID=$2;; REALITY_SNI=$2;;
+    REALITY) REALITY=$2;; REALITY_PORT) REALITY_PORT=$2;; REALITY_UUID) REALITY_UUID=$2;; REALITY_SNI) REALITY_SNI=$2;;
     REALITY_SHORT_ID) REALITY_SHORT_ID=$2;; SERVER) SERVER=$2;; DOMAIN) DOMAIN=$2;;
     NODE) NODE=$2;; CERT_MODE) CERT_MODE=$2;;
   esac
@@ -156,12 +154,9 @@ port_check(){
 }
 
 path_norm(){
-  case "$1" in
-    /*) ;;
-    *) set -- "/$1";;
-  esac
-  case "$1" in *[!A-Za-z0-9._~/-]*) return 1;; esac
-  printf '%s' "$1"
+  case "$1" in /*) path=$1;; *) path=/$1;; esac
+  case "$path" in *[!A-Za-z0-9._~/-]*) return 1;; esac
+  printf '%s\n' "$path"
 }
 
 host_check(){
@@ -174,14 +169,15 @@ asked_value(){
     ANYTLS_PORT) ANYTLS_PORT=$2;; ANYTLS_NAME) ANYTLS_NAME=$2;; ANYTLS_PASSWORD) ANYTLS_PASSWORD=$2;;
     TUIC_PORT) TUIC_PORT=$2;; TUIC_UUID) TUIC_UUID=$2;; TUIC_PASSWORD) TUIC_PASSWORD=$2;;
     HY2_PORT) HY2_PORT=$2;; HY2_PASSWORD) HY2_PASSWORD=$2;;
-    VLESS_WS_PORT) VLESS_WS_PORT=$2;; VLESS_WS_UUID) VLESS_WS_UUID=$2;; VLESS_WS_PATH=$2;;
-    VMESS_WS_PORT) VMESS_WS_PORT=$2;; VMESS_WS_UUID) VMESS_WS_UUID=$2;; VMESS_WS_PATH=$2;;
-    REALITY_PORT) REALITY_PORT=$2;; REALITY_UUID) REALITY_UUID=$2;; REALITY_SNI=$2;;
+    VLESS_WS_PORT) VLESS_WS_PORT=$2;; VLESS_WS_UUID) VLESS_WS_UUID=$2;; VLESS_WS_PATH) VLESS_WS_PATH=$2;;
+    VMESS_WS_PORT) VMESS_WS_PORT=$2;; VMESS_WS_UUID) VMESS_WS_UUID=$2;; VMESS_WS_PATH) VMESS_WS_PATH=$2;;
+    REALITY_PORT) REALITY_PORT=$2;; REALITY_UUID) REALITY_UUID=$2;; REALITY_SNI) REALITY_SNI=$2;;
   esac
 }
 
 ask_set(){
-  prompt=$2; default=$3
+  prompt=$2
+  default=$3
   printf '%s' "$prompt"
   IFS= read -r answer || answer=
   [ -n "$answer" ] || answer=$default
@@ -245,23 +241,26 @@ generate_config(){
   validate_params || { red '参数校验失败'; return 1; }
   [ "$ANYTLS$TUIC$HY2$VLESS_WS$VMESS_WS$REALITY" != 000000 ] ||
     { red '没有启用任何节点'; return 1; }
+
   mkdir -p "$CFG_DIR" "$LOG_DIR"
   export LOG CERT KEY REALITY_DIR
   export ANYTLS ANYTLS_PORT ANYTLS_NAME ANYTLS_PASSWORD TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD
   export HY2 HY2_PORT HY2_PASSWORD VLESS_WS VLESS_WS_PORT VLESS_WS_UUID VLESS_WS_PATH
-  export VMESS_WS VMESS_WS_PORT VMESS_WS_UUID VMESS_WS_PATH REALITY REALITY_PORT REALITY_UUID
-  export REALITY_SNI REALITY_SHORT_ID
+  export VMESS_WS VMESS_WS_PORT VMESS_WS_UUID VMESS_WS_PATH REALITY REALITY_PORT REALITY_UUID REALITY_SNI REALITY_SHORT_ID
+
   tmp="$CFG.tmp.$$"
   python3 - "$tmp" <<'PY'
 import json, os, pathlib, sys
+
 out = pathlib.Path(sys.argv[1])
+e = os.environ
 cfg = {
-    "log": {"level": "info", "timestamp": True, "output": os.environ["LOG"]},
+    "log": {"level": "info", "timestamp": True, "output": e["LOG"]},
     "inbounds": [],
     "outbounds": [{"type": "direct", "tag": "direct"}],
     "route": {"final": "direct"},
 }
-e = os.environ
+
 if e["VLESS_WS"] == "1":
     cfg["inbounds"].append({
         "type": "vless", "tag": "ws-in", "listen": "127.0.0.1",
@@ -270,6 +269,7 @@ if e["VLESS_WS"] == "1":
         "transport": {"type": "ws", "path": e["VLESS_WS_PATH"],
                       "early_data_header_name": "Sec-WebSocket-Protocol"},
     })
+
 if e["VMESS_WS"] == "1":
     cfg["inbounds"].append({
         "type": "vmess", "tag": "vmess-in", "listen": "127.0.0.1",
@@ -278,17 +278,24 @@ if e["VMESS_WS"] == "1":
         "transport": {"type": "ws", "path": e["VMESS_WS_PATH"],
                       "early_data_header_name": "Sec-WebSocket-Protocol"},
     })
+
 if e["REALITY"] == "1":
     private_key = pathlib.Path(e["REALITY_DIR"], "private.key").read_text().strip()
     cfg["inbounds"].append({
         "type": "vless", "tag": "reality-in", "listen": "::",
         "listen_port": int(e["REALITY_PORT"]),
         "users": [{"uuid": e["REALITY_UUID"], "flow": "xtls-rprx-vision"}],
-        "tls": {"enabled": True, "server_name": e["REALITY_SNI"],
-                "reality": {"enabled": True,
-                    "handshake": {"server": e["REALITY_SNI"], "server_port": 443},
-                    "private_key": private_key, "short_id": [e["REALITY_SHORT_ID"]]}},
+        "tls": {
+            "enabled": True, "server_name": e["REALITY_SNI"],
+            "reality": {
+                "enabled": True,
+                "handshake": {"server": e["REALITY_SNI"], "server_port": 443},
+                "private_key": private_key,
+                "short_id": [e["REALITY_SHORT_ID"]],
+            },
+        },
     })
+
 if e["ANYTLS"] == "1":
     cfg["inbounds"].append({
         "type": "anytls", "tag": "anytls-in", "listen": "::",
@@ -296,6 +303,7 @@ if e["ANYTLS"] == "1":
         "users": [{"name": e["ANYTLS_NAME"], "password": e["ANYTLS_PASSWORD"]}],
         "tls": {"enabled": True, "certificate_path": e["CERT"], "key_path": e["KEY"]},
     })
+
 if e["HY2"] == "1":
     cfg["inbounds"].append({
         "type": "hysteria2", "tag": "hy2-in", "listen": "::",
@@ -305,6 +313,7 @@ if e["HY2"] == "1":
         "tls": {"enabled": True, "alpn": ["h3"],
                 "certificate_path": e["CERT"], "key_path": e["KEY"]},
     })
+
 if e["TUIC"] == "1":
     cfg["inbounds"].append({
         "type": "tuic", "tag": "tuic-in", "listen": "::",
@@ -316,8 +325,10 @@ if e["TUIC"] == "1":
         "tls": {"enabled": True, "alpn": ["h3"],
                 "certificate_path": e["CERT"], "key_path": e["KEY"]},
     })
+
 out.write_text(json.dumps(cfg, ensure_ascii=True, indent=2) + "\n")
 PY
+
   "$BIN" check -c "$tmp"
   mv "$tmp" "$CFG"
   chmod 600 "$CFG"
@@ -384,7 +395,7 @@ apply_config(){
 
 set_common(){
   load
-  ask_set SERVER "服务器 IP/域名 [$SERVER]: " "${SERVER:-YOUR_SERVER_IP}"
+  ask_set SERVER "服务器 IP/域名 [${SERVER:-YOUR_SERVER_IP}]: " "${SERVER:-YOUR_SERVER_IP}"
   ask_set NODE "节点名称 [$NODE]: " "$NODE"
   ask_set DOMAIN "证书域名/SNI [$DOMAIN]: " "$DOMAIN"
   save
@@ -395,19 +406,19 @@ configure_node(){
   ensure_common
   case "$protocol" in
     anytls)
-      [ -s "$CERT" ] && [ -s "$KEY" ] || { yellow 'AnyTLS 需要证书，请先执行 cert self'; return 1; }
+      [ -s "$CERT" ] && [ -s "$KEY" ] || { yellow 'AnyTLS 需要证书，请先执行: cert self'; return 1; }
       ask_set ANYTLS_PORT "AnyTLS 端口 [$ANYTLS_PORT]: " "$ANYTLS_PORT"
       ask_set ANYTLS_NAME "AnyTLS 用户名 [$ANYTLS_NAME]: " "$ANYTLS_NAME"
       ask_set ANYTLS_PASSWORD "AnyTLS 密码 [$ANYTLS_PASSWORD]: " "$ANYTLS_PASSWORD"
       ANYTLS=1;;
     tuic)
-      [ -s "$CERT" ] && [ -s "$KEY" ] || { yellow 'TUIC 需要证书，请先执行 cert self'; return 1; }
+      [ -s "$CERT" ] && [ -s "$KEY" ] || { yellow 'TUIC 需要证书，请先执行: cert self'; return 1; }
       ask_set TUIC_PORT "TUIC 端口 [$TUIC_PORT]: " "$TUIC_PORT"
       ask_set TUIC_UUID "TUIC UUID [$TUIC_UUID]: " "$TUIC_UUID"
       ask_set TUIC_PASSWORD "TUIC 密码 [$TUIC_PASSWORD]: " "$TUIC_PASSWORD"
       TUIC=1;;
     hy2)
-      [ -s "$CERT" ] && [ -s "$KEY" ] || { yellow 'Hysteria2 需要证书，请先执行 cert self'; return 1; }
+      [ -s "$CERT" ] && [ -s "$KEY" ] || { yellow 'Hysteria2 需要证书，请先执行: cert self'; return 1; }
       ask_set HY2_PORT "Hysteria2 端口 [$HY2_PORT]: " "$HY2_PORT"
       ask_set HY2_PASSWORD "Hysteria2 密码 [$HY2_PASSWORD]: " "$HY2_PASSWORD"
       HY2=1;;
@@ -506,11 +517,20 @@ main(){
     install) install_packages; install_binary; service_create;;
     nodes) set_common;;
     anytls|tuic|hy2|reality|vless-ws|vmess-ws)
-      case "$1" in vless-ws) configure_node vless_ws;; vmess-ws) configure_node vmess_ws;; *) configure_node "$1";; esac;;
+      case "$1" in
+        vless-ws) configure_node vless_ws;;
+        vmess-ws) configure_node vmess_ws;;
+        *) configure_node "$1";;
+      esac;;
     cert) shift; cert_command "$@";;
     disable) shift; disable_node "$@";;
-    links) links;; restart) service_restart;; status) status;; logs) tail -n 100 "$LOG" 2>/dev/null || true;;
-    menu) menu;; *) echo "用法: $0 {install|nodes|anytls|tuic|hy2|reality|vless-ws|vmess-ws|cert|disable|links|restart|status|logs}"; return 2;;
+    links) links;;
+    restart) service_restart;;
+    status) status;;
+    logs) tail -n 100 "$LOG" 2>/dev/null || true;;
+    menu) menu;;
+    *) echo "用法: $0 {install|nodes|anytls|tuic|hy2|reality|vless-ws|vmess-ws|cert|disable|links|restart|status|logs}"; return 2;;
   esac
 }
+
 main "$@"
