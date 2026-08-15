@@ -505,7 +505,74 @@ commands(){
   printf '%s\n' \
     "$0 install" "$0 login" "$0 list" "$0 create" "$0 select" \
     "$0 configure" "$0 validate" "$0 dns-add" "$0 dns-delete" \
-    "$0 start" "$0 stop" "$0 restart" "$0 status" "$0 origin" "$0 public" "$0 logs"
+    "$0 start" "$0 stop" "$0 restart" "$0 status" "$0 origin" \
+    "$0 public" "$0 links" "$0 delete" "$0 logs" "$0 commands"
+}
+
+interactive_menu(){
+  while :; do
+    printf '\n%s\n' '===== Cloudflare Tunnel 管理菜单 ====='
+    printf '%s\n' \
+      ' 1) 安装/更新 cloudflared' \
+      ' 2) Cloudflare 登录' \
+      ' 3) 列出 Tunnel' \
+      ' 4) 创建 Tunnel' \
+      ' 5) 选择 Tunnel' \
+      ' 6) 配置 Ingress' \
+      ' 7) 校验 Ingress' \
+      ' 8) 添加 DNS 路由' \
+      ' 9) 删除 DNS 路由' \
+      '10) 启动 Tunnel' \
+      '11) 停止 Tunnel' \
+      '12) 重启 Tunnel' \
+      '13) 查看 Tunnel 状态' \
+      '14) 检查本地回源' \
+      '15) 检查公网链路' \
+      '16) 删除当前 Tunnel' \
+      '17) 查看最近日志' \
+      '18) 查看命令帮助' \
+      ' 0) 退出'
+    printf '%s' '请选择 [0-18]: '
+    if ! IFS= read -r choice; then
+      printf '\n'
+      return 0
+    fi
+
+    case "$choice" in
+      1) install_cloudflared;;
+      2) login_cf;;
+      3) list_tunnels;;
+      4) create_tunnel;;
+      5) select_tunnel;;
+      6) configure_ingress;;
+      7) validate_ingress;;
+      8) route_add;;
+      9) route_delete;;
+      10) start_tunnel;;
+      11) stop_tunnel;;
+      12) stop_tunnel; sleep 1; start_tunnel;;
+      13) status_tunnel;;
+      14) check_origin;;
+      15) check_public;;
+      16) delete_tunnel;;
+      17) [ -f "$CF_LOG" ] && tail -n 100 "$CF_LOG" || yellow '日志文件不存在';;
+      18) commands;;
+      0|q|Q)
+        printf '%s\n' '已退出 Cloudflare Tunnel 管理菜单'
+        return 0
+        ;;
+      *)
+        red '无效选项，请输入 0-18'
+        continue
+        ;;
+    esac
+
+    printf '\n%s' '按 Enter 返回菜单，Ctrl-D 退出: '
+    if ! IFS= read -r pause; then
+      printf '\n'
+      return 0
+    fi
+  done
 }
 
 login_cf(){
@@ -543,8 +610,7 @@ main(){
     logs) [ -f "$CF_LOG" ] && tail -n 100 "$CF_LOG" || true;;
     commands) commands;;
     menu)
-      printf '%s\n' 'Cloudflare Tunnel manager'
-      printf '%s\n' '命令: install login list create select configure validate dns-add dns-delete start stop restart status origin public delete logs'
+      interactive_menu
       ;;
     *) red "未知命令: $1"; commands; return 2;;
   esac
