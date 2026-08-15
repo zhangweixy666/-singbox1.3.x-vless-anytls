@@ -19,6 +19,15 @@ SERVICE_FILE="/etc/init.d/$SERVICE"
 ACME="/root/.acme.sh/acme.sh"
 CF_ENV="/root/.config/singbox/cloudflare.env"
 
+read_line(){
+  if [ -t 0 ] || [ -t 1 ]; then
+    if IFS= read -r "$@" </dev/tty 2>/dev/null; then
+      return 0
+    fi
+  fi
+  IFS= read -r "$@"
+}
+
 red(){ printf '\033[31m%s\033[0m\n' "$1"; }
 green(){ printf '\033[32m%s\033[0m\n' "$1"; }
 yellow(){ printf '\033[33m%s\033[0m\n' "$1"; }
@@ -176,19 +185,19 @@ cert_acme(){
   load_cf_token
   if [ -n "${CF_Token:-}" ]; then
     printf '检测到已保存 Cloudflare API Token，是否重新输入？[y/N]: '
-    IFS= read -r replace_token || replace_token=n
+    read_line replace_token || replace_token=n
     case "$replace_token" in
-      y|Y) printf '请输入 Cloudflare API Token: '; IFS= read -r CF_Token; [ -n "$CF_Token" ] || { red 'API Token 不能为空'; return 1; }; save_cf_token ;;
+      y|Y) printf '请输入 Cloudflare API Token: '; read_line CF_Token; [ -n "$CF_Token" ] || { red 'API Token 不能为空'; return 1; }; save_cf_token ;;
       *) green "将使用已保存 Token: $CF_ENV" ;;
     esac
   else
-    printf '请输入 Cloudflare API Token: '; IFS= read -r CF_Token
+    printf '请输入 Cloudflare API Token: '; read_line CF_Token
     [ -n "$CF_Token" ] || { red 'API Token 不能为空'; return 1; }
     save_cf_token
   fi
   export CF_Token
   "$ACME" --set-default-ca --server letsencrypt
-  printf '证书域名: '; IFS= read -r DOMAIN
+  printf '证书域名: '; read_line DOMAIN
   [ -n "$DOMAIN" ] || { red '域名不能为空'; return 1; }
   mkdir -p "$CERT_DIR"
   "$ACME" --issue --dns dns_cf -d "$DOMAIN"
@@ -207,7 +216,7 @@ cert_info(){
   line
   if cert_exists; then openssl x509 -in "$CERT" -noout -subject -issuer -serial -dates 2>/dev/null || true; printf '证书: %s\n私钥: %s\n模式: %s\n' "$CERT" "$KEY" "$CERT_MODE"; else yellow '当前没有证书'; fi
 }
-cert_delete(){ cert_info; printf '确认删除证书和私钥? [y/N]: '; IFS= read -r a; case "$a" in y|Y) rm -f "$CERT" "$KEY"; CERT_MODE=none; save; green '证书已删除' ;; *) yellow '已取消' ;; esac; }
+cert_delete(){ cert_info; printf '确认删除证书和私钥? [y/N]: '; read_line a; case "$a" in y|Y) rm -f "$CERT" "$KEY"; CERT_MODE=none; save; green '证书已删除' ;; *) yellow '已取消' ;; esac; }
 require_cert(){ if ! cert_exists; then yellow '该节点需要证书，请先申请或生成证书'; cert_menu; cert_exists || { red '未配置证书'; return 1; }; fi; }
 
 reality_keys(){
@@ -222,7 +231,7 @@ reality_keys(){
   [ -n "$REALITY_SHORT_ID" ] || REALITY_SHORT_ID=$(shortid)
 }
 
-ask_set(){ _var="$1"; _prompt="$2"; _default="$3"; printf '%s' "$_prompt"; IFS= read -r _ans || _ans=; if [ -n "$_ans" ]; then eval "$_var=\"\$_ans\""; else eval "$_var=\"\$_default\""; fi; }
+ask_set(){ _var="$1"; _prompt="$2"; _default="$3"; printf '%s' "$_prompt"; read_line _ans || _ans=; if [ -n "$_ans" ]; then eval "$_var=\"\$_ans\""; else eval "$_var=\"\$_default\""; fi; }
 ensure_common(){
   load
   ensure_binary
@@ -280,7 +289,7 @@ disable_node(){
   load
   status_nodes
   printf '关闭哪个节点?\n1) AnyTLS\n2) TUIC\n3) Hysteria2\n4) VLESS+WS\n5) VMess+WS\n6) VLESS+Reality\n0) 返回\n选择: '
-  IFS= read -r c || return
+  read_line c || return
   case "$c" in
     1) ANYTLS=0 ;;
     2) TUIC=0 ;;
@@ -460,7 +469,7 @@ node_menu(){
     printf '11) 重置当前节点随机参数\n'
     printf '0) 返回\n'
     printf '选择: '
-    IFS= read -r c || return
+    read_line c || return
     case "$c" in
       1) set_common ;;
       2) cfg_anytls ;;
@@ -478,7 +487,7 @@ node_menu(){
     esac
   done
 }
-cert_menu(){ while :; do line; printf '证书管理\n1) 查看证书\n2) 自签证书\n3) 申请Cloudflare ACME证书\n4) 续期ACME证书\n5) 删除证书\n0) 返回\n选择: '; IFS= read -r c || return; case "$c" in 1) cert_info ;; 2) cert_self; save ;; 3) cert_acme ;; 4) [ -x "$ACME" ] && "$ACME" --cron --home /root/.acme.sh || yellow '尚未安装acme.sh' ;; 5) cert_delete ;; 0) return ;; esac; done; }
-menu(){ while :; do line; printf 'sing-box %s 一体化管理器\n' "$VERSION"; printf '1) 安装/更新依赖和sing-box\n2) 节点管理（单独配置）\n3) 证书管理\n4) 查看节点链接\n5) 重启服务\n6) 查看日志\n0) 退出\n选择: '; IFS= read -r c || exit; case "$c" in 1) packages; install_binary; ln -sf "$SCRIPT" "$PREFIX/singbox"; ln -sf "$SCRIPT" "$PREFIX/sb" ;; 2) node_menu ;; 3) cert_menu ;; 4) links ;; 5) load; service_restart ;; 6) tail -n 100 "$LOG" 2>/dev/null || true ;; 0) exit 0 ;; *) yellow '无效选项' ;; esac; done; }
+cert_menu(){ while :; do line; printf '证书管理\n1) 查看证书\n2) 自签证书\n3) 申请Cloudflare ACME证书\n4) 续期ACME证书\n5) 删除证书\n0) 返回\n选择: '; read_line c || return; case "$c" in 1) cert_info ;; 2) cert_self; save ;; 3) cert_acme ;; 4) [ -x "$ACME" ] && "$ACME" --cron --home /root/.acme.sh || yellow '尚未安装acme.sh' ;; 5) cert_delete ;; 0) return ;; esac; done; }
+menu(){ while :; do line; printf 'sing-box %s 一体化管理器\n' "$VERSION"; printf '1) 安装/更新依赖和sing-box\n2) 节点管理（单独配置）\n3) 证书管理\n4) 查看节点链接\n5) 重启服务\n6) 查看日志\n0) 退出\n选择: '; read_line c || exit; case "$c" in 1) packages; install_binary; ln -sf "$SCRIPT" "$PREFIX/singbox"; ln -sf "$SCRIPT" "$PREFIX/sb" ;; 2) node_menu ;; 3) cert_menu ;; 4) links ;; 5) load; service_restart ;; 6) tail -n 100 "$LOG" 2>/dev/null || true ;; 0) exit 0 ;; *) yellow '无效选项' ;; esac; done; }
 main(){ root_check; os_detect; load; case "${1:-}" in install) packages; install_binary; service_create ;; nodes|node) node_menu ;; anytls) cfg_anytls ;; tuic) cfg_tuic ;; hy2) cfg_hy2 ;; vless-ws|vless_ws) cfg_vless_ws ;; vmess-ws|vmess_ws|vmess) cfg_vmess_ws ;; reality) cfg_reality ;; cert) cert_menu ;; links) links ;; restart) service_restart ;; logs) tail -n 100 "$LOG" 2>/dev/null || true ;; status) status_nodes ;; regen|regen-random) regen_random_current ;; *) menu ;; esac; }
 main "$@"
