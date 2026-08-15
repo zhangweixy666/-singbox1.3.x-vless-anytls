@@ -470,19 +470,61 @@ status_tunnel(){
   [ -f "$CF_LOG" ] && tail -n 20 "$CF_LOG"
 }
 
+websocket_probe(){
+  label=$1
+  url=$2
+  key=$(openssl rand -base64 16 | tr -d '\r\n') || {
+    red "$label: 无法生成 WebSocket 探测密钥"
+    return 1
+  }
+  headers=$(mktemp)
+  if curl --silent --show-error --http1.1 \
+      --connect-timeout 5 --max-time 15 \
+      -D "$headers" -o /dev/null \
+      -H 'Connection: Upgrade' \
+      -H 'Upgrade: websocket' \
+      -H 'Sec-WebSocket-Version: 13' \
+      -H "Sec-WebSocket-Key: $key" \
+      "$url"; then
+    curl_rc=0
+  else
+    curl_rc=$?
+  fi
+  status=$(awk 'NR == 1 { print $2; exit }' "$headers")
+  if [ "$status" = 101 ]; then
+    rm -f "$headers"
+    if [ "$curl_rc" -eq 28 ]; then
+      yellow "$label: WebSocket 已升级 (HTTP 101，连接保持开放)"
+    else
+      green "$label: WebSocket 握手成功 (HTTP 101)"
+    fi
+    return 0
+  fi
+  if [ "$curl_rc" -ne 0 ]; then
+    rm -f "$headers"
+    red "$label: 请求失败 (curl $curl_rc)"
+    return 1
+  fi
+  red "$label: WebSocket 握手失败 (HTTP ${status:-unknown})"
+  sed -n '1,8p' "$headers"
+  rm -f "$headers"
+  return 1
+}
+
 check_origin(){
   load_env
   valid_port "$CF_SERVICE_PORT" || return 1
-  ss -lntp 2>/dev/null | grep -E ":$CF_SERVICE_PORT([[:space:]]|$)" || true
-  curl --silent --show-error --connect-timeout 5 \
-    "http://127.0.0.1:$CF_SERVICE_PORT$CF_SERVICE_PATH" 2>&1 | head -n 20 || true
+  if ! ss -lntp 2>/dev/null | grep -Eq ":$CF_SERVICE_PORT([[:space:]]|$)"; then
+    red "本地回源端口未监听: $CF_SERVICE_PORT"
+    return 1
+  fi
+  websocket_probe '本地回源' "http://127.0.0.1:$CF_SERVICE_PORT$CF_SERVICE_PATH"
 }
 
 check_public(){
   load_env
   [ -n "$CF_HOSTNAME" ] || { red '未配置域名'; return 1; }
-  curl --silent --show-error --connect-timeout 10 \
-    "https://$CF_HOSTNAME$CF_SERVICE_PATH" 2>&1 | head -n 30 || true
+  websocket_probe '公网链路' "https://$CF_HOSTNAME$CF_SERVICE_PATH"
 }
 
 delete_tunnel(){
@@ -503,9 +545,9 @@ delete_tunnel(){
 
 commands(){
   printf '%s\n' \
-    "$0 install" "$0 login" "$0 list" "$0 create" "$0 select" \
+    "$0 guided" "$0 login" "$0 install" "$0 list" "$0 create" "$0 select" \
     "$0 configure" "$0 validate" "$0 dns-add" "$0 dns-delete" \
-    "$0 start" "$0 stop" "$0 restart" "$0 status" "$0 origin" \
+    "$0 start" "$0 stop" "$0 restart" "$0 status" "$0 info" "$0 origin" \
     "$0 public" "$0 links" "$0 delete" "$0 logs" "$0 commands"
 }
 
@@ -575,6 +617,82 @@ interactive_menu(){
   done
 }
 
+info(){
+  load_env
+  printf '%s\n' '===== Cloudflare Tunnel 详细信息 ====='
+  printf '脚本版本: %s\ncloudflared: %s\n' "$VERSION" "$CLOUDFLARED_VERSION"
+  printf '系统: %s / init=%s\n' "$OS" "$INIT"
+  printf 'Tunnel 名称: %s\nTunnel ID: %s\n' "$CF_TUNNEL_NAME" "$CF_TUNNEL_ID"
+  printf 'Zone: %s\n域名: %s\n' "$CF_ZONE" "$CF_HOSTNAME"
+  printf '回源: 127.0.0.1:%s%s\n协议: %s\n已启用: %s\n' \
+    "$CF_SERVICE_PORT" "$CF_SERVICE_PATH" "$CF_PROTOCOL" "$CF_ENABLED"
+  printf '配置文件: %s [%s]\n' "$CF_CONFIG" \
+    "$([ -f "$CF_CONFIG" ] && printf '存在' || printf '缺失')"
+  printf '凭据文件: %s [%s]\n' "$CF_CREDENTIALS" \
+    "$([ -f "$CF_CREDENTIALS" ] && printf '存在' || printf '缺失')"
+  printf '服务: '
+  case "$(service_mode)" in
+    openrc) rc-service cloudflared status 2>&1 || true;;
+    systemd) systemctl is-active cloudflared 2>&1 || true;;
+    *) printf 'manual\n';;
+  esac
+  if [ -f "$CF_CONFIG" ]; then
+    printf '%s\n' 'Ingress 校验:'
+    "$CF_BIN" --config "$CF_CONFIG" tunnel ingress validate 2>&1 || true
+  fi
+}
+
+guided(){
+  require_bin || return 1
+  load_env
+  printf '%s\n' '===== Cloudflare Tunnel 一键流程 ====='
+
+  if [ -s "$CF_DIR/cert.pem" ]; then
+    green '已检测到 Cloudflare 授权证书，跳过登录'
+  else
+    login_cf || return 1
+  fi
+
+  load_env
+  if valid_id "$CF_TUNNEL_ID" && [ -s "$CF_CREDENTIALS" ]; then
+    printf '检测到现有 Tunnel [%s]，是否复用？[Y/n]: ' "$CF_TUNNEL_NAME"
+    IFS= read -r reuse || reuse=
+    case "$reuse" in
+      n|N) create_tunnel || return 1;;
+      *) green '复用现有 Tunnel';;
+    esac
+  else
+    printf '%s\n' '未检测到可用 Tunnel'
+    printf '输入 1 创建新 Tunnel，输入 2 选择已有 Tunnel [1]: '
+    IFS= read -r action || action=1
+    case "$action" in
+      2) select_tunnel || return 1;;
+      *) create_tunnel || return 1;;
+    esac
+  fi
+
+  load_env
+  if [ -f "$CF_CONFIG" ] && [ -n "$CF_ZONE" ] && [ -n "$CF_HOSTNAME" ]; then
+    printf '检测到现有 Ingress 配置，是否保留？[Y/n]: '
+    keep_config=
+    IFS= read -r keep_config || keep_config=
+    case "$keep_config" in
+      n|N) configure_ingress || return 1;;
+      *) green '保留现有 Ingress 配置';;
+    esac
+  else
+    configure_ingress || return 1
+  fi
+
+  validate_ingress || return 1
+  route_add || return 1
+  start_tunnel || return 1
+  check_origin || return 1
+  check_public || return 1
+  info
+  green 'Cloudflare Tunnel 一键流程完成'
+}
+
 login_cf(){
   require_bin || return 1
   mkdir -p "$CF_DIR"
@@ -612,6 +730,8 @@ main(){
     menu)
       interactive_menu
       ;;
+    guided) guided;;
+    info) info;;
     *) red "未知命令: $1"; commands; return 2;;
   esac
 }
