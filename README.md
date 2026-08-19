@@ -282,7 +282,8 @@ DELETE-ALL-TUNNELS
 - 删除本机 `config.yml`；
 - 删除 OpenRC/systemd 服务文件；
 - 删除监督脚本、PID 文件和 Tunnel 日志；
-- 保留 Cloudflare 授权证书 `cert.pem`；
+- 删除旧的 Cloudflare 授权证书 `cert.pem`；
+- 删除完成后执行 `cloudflared login`，重新生成 `cert.pem`；
 - 保留 sing-box 配置、节点参数和证书。
 
 也可以跳过交互确认：
@@ -385,8 +386,8 @@ dig +short CNAME your-hostname.example.com
 - Cloudflare 登录授权需要在浏览器中完成。
 - DNS 路由创建需要域名已经托管在目标 Cloudflare Zone。
 - 删除 DNS 记录需要具有 Zone DNS 编辑权限的 API Token。
-- `cloudflared-reset-all.sh --yes` 会删除当前账号下全部 Tunnel，请确认当前授权账号无其他重要 Tunnel。
-- 删除 Tunnel 不会自动删除 DNS 记录。
+- `cloudflared-reset-all.sh --yes` 会删除当前账号下全部 Tunnel，并在删除后重新执行 Cloudflare 登录，请确认当前授权账号无其他重要 Tunnel。
+- 删除 Tunnel 不会自动删除 DNS 记录；重新登录需要在浏览器中完成授权。
 - 不要把 Tunnel JSON 凭据、`cert.pem` 或 API Token 提交到 GitHub。
 - Cloudflare Tunnel 不会替代 sing-box 本地监听，必须先确认本地端口和 WS 路径正确。
 - 如果 QUIC/UDP 不稳定，可以将 Tunnel 协议改为 `http2`。
