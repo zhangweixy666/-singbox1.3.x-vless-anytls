@@ -12,7 +12,7 @@ README 的命令按“一个代码块一个命令”排列，便于直接复制�
 
 - `singbox-manager.sh`：配置和管理 sing-box 节点。
 - `cloudflared-manager.sh`：配置和管理 Cloudflare Tunnel、DNS 路由、本地回源和开机自启。
-- `cloudflared-reset-all.sh`：从头开始时，一键删除当前账号下的全部 Cloudflare Tunnel，并清理 VPS 本地 Tunnel 状态。
+- `cloudflared-reset-all.sh`：从头开始时，重新登录 Cloudflare，不删除账号内已有 Tunnel。
 
 项目重点解决以下问题：
 
@@ -22,7 +22,7 @@ README 的命令按“一个代码块一个命令”排列，便于直接复制�
 - 支持 Alpine/OpenRC 和 Debian/Ubuntu/systemd。
 - 支持 cloudflared 崩溃后自动重启。
 - 支持 Tunnel 创建、选择、Ingress 配置、DNS 路由和状态检查。
-- 支持删除全部 Tunnel 后重新开始。
+- 支持保留已有 Tunnel，重新登录后创建新的 Tunnel。
 - 已验证 Cloudflare Tunnel 公网 HTTPS 到本地 WebSocket 的完整链路。
 - 服务生成时自动创建 sing-box 日志目录，避免日志路径不存在导致服务启动失败。
 
@@ -39,7 +39,7 @@ README 的命令按“一个代码块一个命令”排列，便于直接复制�
 | 服务自启 | 支持 OpenRC、systemd，以及部分手动启动环境 |
 | 崩溃恢复 | cloudflared 退出后自动等待 3 秒重新启动 |
 | 链路检查 | 检查本地回源、DNS、Tunnel 状态和公网 HTTPS |
-| 全量重置 | 删除当前账号下全部 Tunnel 并清理本机 Tunnel 状态 |
+| 重新登录 | 删除本机旧 cert.pem 并重新登录，不删除已有 Tunnel |
 | 中文界面 | 菜单、状态、错误提示和使用说明均为中文 |
 
 ## ⚡ 快速开始
@@ -245,9 +245,9 @@ http2
 
 `dns-delete` 需要具有对应 Zone DNS 编辑权限的 Cloudflare API Token。
 
-## 🧹 从头开始：删除全部 Cloudflare Tunnel
+## 🧹 从头开始：重新登录并创建新的 Cloudflare Tunnel
 
-如果需要重新注册、重新创建 Tunnel，可以使用全量重置脚本。
+如果需要重新登录并创建新的 Tunnel，可以使用本地重置脚本。脚本不会删除 Cloudflare 账号内已有的 Tunnel。
 
 下载脚本：
 
@@ -270,20 +270,16 @@ chmod +x /tmp/cloudflared-reset-all.sh
 脚本会要求输入：
 
 ```text
-DELETE-ALL-TUNNELS
+RESET-LOCAL-CLOUDFLARED
 ```
 
 确认后执行以下操作：
 
-- 停止本机 cloudflared 服务；
-- 停止 cloudflared 和 Tunnel 监督进程；
-- 删除当前 Cloudflare 账号下列出的全部 Tunnel；
-- 删除本机 Tunnel JSON 凭据；
-- 删除本机 `config.yml`；
-- 删除 OpenRC/systemd 服务文件；
-- 删除监督脚本、PID 文件和 Tunnel 日志；
+- 保留 Cloudflare 账号内已有的 Tunnel 和 DNS 记录；
+- 保留本机已有 Tunnel JSON 凭据；
 - 删除旧的 Cloudflare 授权证书 `cert.pem`；
 - 删除完成后执行 `cloudflared login`，重新生成 `cert.pem`；
+- 之后可运行 `/usr/local/bin/cloudflared-manager.sh guided` 创建新的 Tunnel；
 - 保留 sing-box 配置、节点参数和证书。
 
 也可以跳过交互确认：
@@ -292,11 +288,11 @@ DELETE-ALL-TUNNELS
 /tmp/cloudflared-reset-all.sh --yes
 ```
 
-### ⚠️ 全量删除的重要说明
+### ⚠️ 重新登录的重要说明
 
-`cloudflared-reset-all.sh` 只负责删除 Tunnel 和本机 Tunnel 状态，**不会自动删除 Cloudflare DNS 记录**。
+`cloudflared-reset-all.sh` 只负责删除本机旧的 cert.pem 并重新登录，**不会删除、停止或修改 Cloudflare 账号内已有的 Tunnel，也不会删除 DNS 记录**。
 
-因此，删除全部 Tunnel 后，之前的 CNAME 记录可能仍然存在，例如：
+因此，已有 Tunnel 和之前的 CNAME 记录会继续保留，例如：
 
 ```text
 cf-test.example.com CNAME <旧 Tunnel UUID>.cfargotunnel.com
@@ -308,9 +304,7 @@ cf-test.example.com CNAME <旧 Tunnel UUID>.cfargotunnel.com
 /usr/local/bin/cloudflared-manager.sh dns-delete
 ```
 
-或者使用 Cloudflare API 删除对应 Zone 下的 DNS 记录。
-
-删除 Tunnel 是不可逆操作。DNS 记录、Zone、sing-box 配置、节点参数和证书不会由重置脚本自动恢复。
+本地重置不会删除 Tunnel、DNS 记录、Zone、sing-box 配置、节点参数或证书。
 
 ## 📁 主要文件和目录
 
@@ -386,8 +380,8 @@ dig +short CNAME your-hostname.example.com
 - Cloudflare 登录授权需要在浏览器中完成。
 - DNS 路由创建需要域名已经托管在目标 Cloudflare Zone。
 - 删除 DNS 记录需要具有 Zone DNS 编辑权限的 API Token。
-- `cloudflared-reset-all.sh --yes` 会删除当前账号下全部 Tunnel，并在删除后重新执行 Cloudflare 登录，请确认当前授权账号无其他重要 Tunnel。
-- 删除 Tunnel 不会自动删除 DNS 记录；重新登录需要在浏览器中完成授权。
+- `cloudflared-reset-all.sh --yes` 只会删除本机旧 cert.pem 并重新执行 Cloudflare 登录，不会删除当前账号下已有 Tunnel。
+- 重新登录需要在浏览器中完成授权；本地重置不会删除 Tunnel 或 DNS 记录。
 - 不要把 Tunnel JSON 凭据、`cert.pem` 或 API Token 提交到 GitHub。
 - Cloudflare Tunnel 不会替代 sing-box 本地监听，必须先确认本地端口和 WS 路径正确。
 - 如果 QUIC/UDP 不稳定，可以将 Tunnel 协议改为 `http2`。
@@ -402,5 +396,5 @@ GPL-3.0
 
 - 本项目：https://github.com/zhangweixy666/-singbox1.3.x-vless-anytls
 - Cloudflare Tunnel 管理器：https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-vless-anytls/main/cloudflared-manager.sh
-- Tunnel 全量重置脚本：https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-vless-anytls/main/cloudflared-reset-all.sh
+- Tunnel 重新登录脚本：https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-vless-anytls/main/cloudflared-reset-all.sh
 - DNS 参考项目：https://github.com/zhangweixy666/dns-setup
