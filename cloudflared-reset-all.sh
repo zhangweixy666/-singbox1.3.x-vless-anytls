@@ -1,6 +1,6 @@
 #!/bin/sh
 # Delete every Tunnel in the current Cloudflare account.
-# This destructive operation requires --all; unattended mode additionally requires --yes.
+# Without arguments, the script asks for DELETE-ALL-TUNNELS; --yes skips the prompt.
 set -eu
 umask 077
 
@@ -28,27 +28,21 @@ find_cloudflared(){
 }
 
 confirm_reset(){
-  all=0
   yes=0
   for arg in "$@"; do
     case "$arg" in
-      --all) all=1;;
       --yes) yes=1;;
+      --all) :;;
       *) red "未知参数: $arg"; exit 2;;
     esac
   done
-
-  [ "$all" = 1 ] || {
-    red "这是删除当前账号全部 Tunnel 的破坏性操作"
-    red "如确认执行，请使用: $0 --all"
-    exit 2
-  }
 
   [ "$yes" = 1 ] && return 0
 
   printf '%s\n' \
     '危险操作：这会删除当前 Cloudflare 账号下的全部 Tunnel。' \
     '同时停止本机 cloudflared，并清理本机 Tunnel 配置、凭据和服务文件。' \
+    '删除完成后会删除旧 cert.pem，并重新执行 Cloudflare 登录授权。' \
     '不会删除 sing-box 配置、节点参数或证书。'
   printf '请输入 DELETE-ALL-TUNNELS 确认：'
   IFS= read -r answer || answer=
@@ -158,6 +152,25 @@ clean_local_state(){
   fi
 }
 
+relogin_cloudflare(){
+  mkdir -p "$CF_DIR"
+  chmod 700 "$CF_DIR"
+  rm -f ~/.cloudflared/cert.pem
+
+  yellow '旧的 Cloudflare cert.pem 已删除，请在浏览器中完成新的授权'
+  if "$CF_BIN" login; then
+    [ -s "$CF_DIR/cert.pem" ] || {
+      red 'cloudflared login 未生成 cert.pem'
+      return 1
+    }
+  else
+    red 'cloudflared login 失败或未完成'
+    return 1
+  fi
+  chmod 600 "$CF_DIR/cert.pem"
+  green 'Cloudflare 重新授权成功'
+}
+
 main(){
   root_check
   find_cloudflared
@@ -166,9 +179,14 @@ main(){
 
   if delete_all_tunnels; then
     clean_local_state
-    green '全部 Cloudflare Tunnel 已删除，本机 Tunnel 状态已清理'
-    green 'Cloudflare cert.pem 已保留'
-    exit 0
+    if relogin_cloudflare; then
+      green '全部 Cloudflare Tunnel 已删除，本机 Tunnel 状态已清理'
+      green 'Cloudflare cert.pem 已重新生成'
+      exit 0
+    fi
+
+    yellow '远端 Tunnel 已删除，本机状态已清理，但 Cloudflare 重新授权未完成'
+    exit 1
   fi
 
   yellow '远端 Tunnel 未全部删除，本机状态文件已保留，便于重试'
