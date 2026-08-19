@@ -697,7 +697,8 @@ login_cf(){
   require_bin || return 1
   mkdir -p "$CF_DIR"
   chmod 700 "$CF_DIR"
-  "$CF_BIN" tunnel login
+  rm -f ~/.cloudflared/cert.pem
+  "$CF_BIN" login
   [ -s "$CF_DIR/cert.pem" ] || { red '未生成 cert.pem'; return 1; }
   chmod 600 "$CF_DIR/cert.pem"
   green 'Cloudflare 授权成功'
