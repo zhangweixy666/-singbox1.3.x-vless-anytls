@@ -295,7 +295,9 @@ load_dns_zone_id(){
 route_add(){
   require_bin || return 1
   load_env
-  valid_id "$CF_TUNNEL_ID" || { red 'Tunnel ID 无效'; return 1; }
+  valid_id "$CF_TUNNEL_ID" || { red 'Tunnel ID 无效，请先创建或选择 Tunnel'; return 1; }
+  [ -n "$CF_ZONE" ] || { red '未配置 Zone，请先运行 configure 配置域名'; return 1; }
+  [ -n "$CF_HOSTNAME" ] || { red '未配置域名，请先运行 configure 配置域名'; return 1; }
   case "$CF_HOSTNAME" in *."$CF_ZONE") ;; *) red '域名不属于当前 Zone'; return 1;; esac
   "$CF_BIN" tunnel route dns --overwrite-dns "$CF_TUNNEL_ID" "$CF_HOSTNAME"
   green "DNS 路由已添加: $CF_HOSTNAME"
@@ -697,7 +699,7 @@ login_cf(){
   require_bin || return 1
   mkdir -p "$CF_DIR"
   chmod 700 "$CF_DIR"
-  rm -f ~/.cloudflared/cert.pem
+  rm -f "$CF_DIR/cert.pem"
   "$CF_BIN" login
   [ -s "$CF_DIR/cert.pem" ] || { red '未生成 cert.pem'; return 1; }
   chmod 600 "$CF_DIR/cert.pem"
