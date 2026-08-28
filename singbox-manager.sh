@@ -70,6 +70,7 @@ install_binary(){
   file=$(find "$tmp" -type f -name sing-box | head -n1)
   [ -n "$file" ] || { red '未找到 sing-box 二进制'; exit 1; }
   install -m 755 "$file" "$BIN"
+  # 注意：不要对 sing-box 目录创建软链，保持二进制为可执行文件
   ln -sf "$SCRIPT" "$PREFIX/singbox"
   ln -sf "$SCRIPT" "$PREFIX/sb"
   trap - EXIT INT TERM
@@ -86,6 +87,14 @@ fmt_host(){ case "$1" in *:*) printf '[%s]' "$1" ;; *) printf '%s' "$1" ;; esac;
 port_check(){
   case "$1" in ''|*[!0-9]*) red "端口无效: $1"; return 1;; esac
   [ "$1" -ge 1 ] && [ "$1" -le 65535 ] || { red "端口范围无效: $1"; return 1; }
+}
+detect_server(){
+  # 优先查询公网出口 IP，失败时回退默认路由源地址 / hostname -i，均不可用则返回失败
+  _ip=$(curl -4 -fsS --max-time 3 https://api.ipify.org 2>/dev/null)
+  [ -n "$_ip" ] || _ip=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([^ ][^ ]*\).*/\1/p' | head -n1)
+  [ -n "$_ip" ] || _ip=$(hostname -i 2>/dev/null | awk '{print $1}')
+  case "$_ip" in ''|127.*|::1|YOUR_SERVER_IP) return 1 ;; esac
+  printf '%s\n' "$_ip"
 }
 
 ensure_randoms(){
@@ -126,7 +135,8 @@ load(){
     k=${l%%=*}; v=${l#*=}
     case "$k" in
       ANYTLS|ANYTLS_PORT|ANYTLS_NAME|ANYTLS_PASSWORD|TUIC|TUIC_PORT|TUIC_UUID|TUIC_PASSWORD|HY2|HY2_PORT|HY2_PASSWORD|VLESS_WS|VLESS_WS_PORT|VLESS_WS_UUID|VLESS_WS_PATH|VMESS_WS|VMESS_WS_PORT|VMESS_WS_UUID|VMESS_WS_PATH|REALITY|REALITY_PORT|REALITY_UUID|REALITY_SNI|REALITY_SHORT_ID|SERVER|DOMAIN|NODE|CERT_MODE)
-        eval "$k=\"$v\"" ;;
+        # 只赋值，不重新解析取值：避免 params.env 中的引号/分号被 eval 执行
+        eval "$k=\$v" ;;
     esac
   done < "$PARAMS"
 }
@@ -235,7 +245,10 @@ ask_set(){ _var="$1"; _prompt="$2"; _default="$3"; printf '%s' "$_prompt"; read_
 ensure_common(){
   load
   ensure_binary
-  if [ -z "$SERVER" ]; then _def=$(hostname -i 2>/dev/null | awk '{print $1}'); [ -n "$_def" ] || _def=YOUR_SERVER_IP; ask_set SERVER "服务器IP/域名 [$_def]: " "$_def"; fi
+  if [ -z "$SERVER" ]; then
+    [ -n "$(detect_server)" ] && SERVER=$(detect_server) || SERVER=YOUR_SERVER_IP
+    ask_set SERVER "服务器IP/域名 [$SERVER]: " "$SERVER"
+  fi
   [ -n "$NODE" ] || NODE=sing-box-node
 }
 
@@ -256,8 +269,9 @@ status_nodes(){
 
 set_common(){
   load
-  _def_server="${SERVER:-$(hostname -i 2>/dev/null | awk '{print $1}')}"; [ -n "$_def_server" ] || _def_server=YOUR_SERVER_IP
-  ask_set SERVER "服务器IP/域名 [$_def_server]: " "$_def_server"
+  [ -n "$SERVER" ] || SERVER=$(detect_server 2>/dev/null || true)
+  [ -n "$SERVER" ] || SERVER=YOUR_SERVER_IP
+  ask_set SERVER "服务器IP/域名 [$SERVER]: " "$SERVER"
   ask_set NODE "节点名称 [$NODE]: " "$NODE"
   ask_set DOMAIN "证书域名/SNI [$DOMAIN]: " "$DOMAIN"
   save
@@ -423,19 +437,19 @@ show_one_link(){
   host=${SERVER:-YOUR_SERVER_IP}
   printf '\n节点链接:\n'
   case "$1" in
-    anytls) [ "$ANYTLS" = 1 ] && printf 'anytls://%s@%s:%s/?sni=%s#%s-anytls\n' "$ANYTLS_PASSWORD" "$host" "$ANYTLS_PORT" "$DOMAIN" "$NODE" && manual_one anytls ;;
-    tuic) [ "$TUIC" = 1 ] && printf 'tuic://%s:%s@%s:%s?sni=%s&congestion_control=bbr#%s-tuic\n' "$TUIC_UUID" "$TUIC_PASSWORD" "$host" "$TUIC_PORT" "$DOMAIN" "$NODE" && manual_one tuic ;;
-    hy2) [ "$HY2" = 1 ] && printf 'hysteria2://%s@%s:%s/?sni=%s#%s-hy2\n' "$HY2_PASSWORD" "$host" "$HY2_PORT" "$DOMAIN" "$NODE" && manual_one hy2 ;;
-    vless_ws) [ "$VLESS_WS" = 1 ] && printf 'vless://%s@%s:%s?encryption=none&security=none&type=ws&path=%s#%s-vless-ws\n' "$VLESS_WS_UUID" "$host" "$VLESS_WS_PORT" "$(printf '%s' "$VLESS_WS_PATH" | sed 's#/#%2F#g')" "$NODE" && manual_one vless_ws ;;
-    vmess_ws) [ "$VMESS_WS" = 1 ] && printf 'vmess://%s@%s:%s?type=ws&path=%s&security=none&alterId=0#%s-vmess-ws\n' "$VMESS_WS_UUID" "$host" "$VMESS_WS_PORT" "$(printf '%s' "$VMESS_WS_PATH" | sed 's#/#%2F#g')" "$NODE" && manual_one vmess_ws ;;
-    reality) [ "$REALITY" = 1 ] && [ -s "$REALITY_DIR/public.key" ] && printf 'vless://%s@%s:%s?encryption=none&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp&flow=xtls-rprx-vision#%s-reality\n' "$REALITY_UUID" "$host" "$REALITY_PORT" "$REALITY_SNI" "$(cat "$REALITY_DIR/public.key")" "$REALITY_SHORT_ID" "$NODE" && manual_one reality ;;
+    anytls) [ "$ANYTLS" = 1 ] && { printf 'anytls://%s:%s@%s:%s/?sni=%s#%s-anytls\n' "$ANYTLS_NAME" "$ANYTLS_PASSWORD" "$host" "$ANYTLS_PORT" "$DOMAIN" "$NODE"; manual_one anytls; } ;;
+    tuic) [ "$TUIC" = 1 ] && { printf 'tuic://%s:%s@%s:%s?sni=%s&congestion_control=bbr#%s-tuic\n' "$TUIC_UUID" "$TUIC_PASSWORD" "$host" "$TUIC_PORT" "$DOMAIN" "$NODE"; manual_one tuic; } ;;
+    hy2) [ "$HY2" = 1 ] && { printf 'hysteria2://%s@%s:%s/?sni=%s#%s-hy2\n' "$HY2_PASSWORD" "$host" "$HY2_PORT" "$DOMAIN" "$NODE"; manual_one hy2; } ;;
+    vless_ws) [ "$VLESS_WS" = 1 ] && { printf 'vless://%s@%s:%s?encryption=none&security=none&type=ws&path=%s#%s-vless-ws\n' "$VLESS_WS_UUID" "$host" "$VLESS_WS_PORT" "$(printf '%s' "$VLESS_WS_PATH" | sed 's#/#%2F#g')" "$NODE"; manual_one vless_ws; } ;;
+    vmess_ws) [ "$VMESS_WS" = 1 ] && { printf 'vmess://%s@%s:%s?type=ws&path=%s&security=none&alterId=0#%s-vmess-ws\n' "$VMESS_WS_UUID" "$host" "$VMESS_WS_PORT" "$(printf '%s' "$VMESS_WS_PATH" | sed 's#/#%2F#g')" "$NODE"; manual_one vmess_ws; } ;;
+    reality) [ "$REALITY" = 1 ] && [ -s "$REALITY_DIR/public.key" ] && { printf 'vless://%s@%s:%s?encryption=none&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp&flow=xtls-rprx-vision#%s-reality\n' "$REALITY_UUID" "$host" "$REALITY_PORT" "$REALITY_SNI" "$(cat "$REALITY_DIR/public.key")" "$REALITY_SHORT_ID" "$NODE"; manual_one reality; } ;;
   esac
 }
 links(){
   load
   host=${SERVER:-YOUR_SERVER_IP}
   printf '\n已启用节点链接:\n'
-  [ "$ANYTLS" = 1 ] && printf 'anytls://%s@%s:%s/?sni=%s#%s-anytls\n' "$ANYTLS_PASSWORD" "$host" "$ANYTLS_PORT" "$DOMAIN" "$NODE"
+  [ "$ANYTLS" = 1 ] && printf 'anytls://%s:%s@%s:%s/?sni=%s#%s-anytls\n' "$ANYTLS_NAME" "$ANYTLS_PASSWORD" "$host" "$ANYTLS_PORT" "$DOMAIN" "$NODE"
   [ "$TUIC" = 1 ] && printf 'tuic://%s:%s@%s:%s?alpn=h3&congestion_control=bbr&congestion_controller=bbr&sni=%s&udp_relay_mode=native&version=5#TUIC%%20%s\n' "$TUIC_UUID" "$TUIC_PASSWORD" "$(fmt_host "$host")" "$TUIC_PORT" "$DOMAIN" "$NODE"
   [ "$HY2" = 1 ] && printf 'hysteria2://%s@%s:%s/?obfs=salamander&obfs-password=%s&sni=%s#%s\n' "$HY2_PASSWORD" "$(fmt_host "$host")" "$HY2_PORT" "$HY2_PASSWORD" "$DOMAIN" "$NODE"
   [ "$VLESS_WS" = 1 ] && printf 'vless://%s@%s:%s?encryption=none&security=none&type=ws&path=%s#%s-vless-ws\n' "$VLESS_WS_UUID" "$host" "$VLESS_WS_PORT" "$(printf '%s' "$VLESS_WS_PATH" | sed 's#/#%2F#g')" "$NODE"
@@ -443,11 +457,11 @@ links(){
   [ "$REALITY" = 1 ] && [ -s "$REALITY_DIR/public.key" ] && printf 'vless://%s@%s:%s?encryption=none&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp&flow=xtls-rprx-vision#%s-reality\n' "$REALITY_UUID" "$host" "$REALITY_PORT" "$REALITY_SNI" "$(cat "$REALITY_DIR/public.key")" "$REALITY_SHORT_ID" "$NODE"
   if [ "$ANYTLS$TUIC$HY2$VLESS_WS$VMESS_WS$REALITY" = 000000 ]; then yellow '当前没有启用任何节点'; fi
   printf '\n手填参数:\n'
-  [ "$ANYTLS" = 1 ] && manual_one anytls && printf '\n'
-  [ "$TUIC" = 1 ] && manual_one tuic && printf '\n'
-  [ "$HY2" = 1 ] && manual_one hy2 && printf '\n'
-  [ "$VLESS_WS" = 1 ] && manual_one vless_ws && printf '\n'
-  [ "$VMESS_WS" = 1 ] && manual_one vmess_ws && printf '\n'
+  [ "$ANYTLS" = 1 ] && manual_one anytls
+  [ "$TUIC" = 1 ] && manual_one tuic
+  [ "$HY2" = 1 ] && manual_one hy2
+  [ "$VLESS_WS" = 1 ] && manual_one vless_ws
+  [ "$VMESS_WS" = 1 ] && manual_one vmess_ws
   [ "$REALITY" = 1 ] && manual_one reality
 }
 
