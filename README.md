@@ -243,7 +243,7 @@ http2
 /usr/local/bin/cloudflared-manager.sh dns-delete
 ```
 
-`dns-delete` 需要具有对应 Zone DNS 编辑权限的 Cloudflare API Token。
+`dns-delete` 优先读取 `/etc/cloudflared-manager.api` 中的 Cloudflare API Token；若未配置，则自动从 `/root/.cloudflared/cert.pem`（ARGO TUNNEL TOKEN）中提取 apiToken 完成删除，无需手动输入。
 
 ## 🧹 从头开始：重新登录并创建新的 Cloudflare Tunnel
 

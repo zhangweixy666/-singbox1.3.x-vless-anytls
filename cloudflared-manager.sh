@@ -61,6 +61,7 @@ defaults(){
   CF_SERVICE_PATH=/ws
   CF_PROTOCOL=auto
   CF_ENABLED=0
+  CF_API_TOKEN=
 }
 
 load_env(){
@@ -207,7 +208,7 @@ list_tunnels(){
 create_tunnel(){
   require_bin || return 1
   load_env
-  ask CF_TUNNEL_NAME 'Tunnel 名称 [singbox-tunnel]: ' "${CF_TUNNEL_NAME:-singbox-tunnel}"
+  ask CF_TUNNEL_NAME 'Tunnel 名称 [singbox-tunnel]: ' "singbox-tunnel"
   case "$CF_TUNNEL_NAME" in ''|*[!A-Za-z0-9._-]*) red '名称格式无效'; return 1;; esac
   output=$("$CF_BIN" tunnel create "$CF_TUNNEL_NAME" 2>&1) || {
     printf '%s\n' "$output"; return 1;
@@ -283,8 +284,41 @@ validate_ingress(){
   "$CF_BIN" --config "$CF_CONFIG" tunnel ingress validate
 }
 
+# 从 cert.pem(ARGO TUNNEL TOKEN) 中提取 API Token，作为未配置 API 文件时的兜底
+extract_api_token_from_cert(){
+  [ -s "$CF_DIR/cert.pem" ] || return 1
+  # 只取 BEGIN/END 之间的 base64 内容（去掉首尾标记行），写入临时文件避免管道问题
+  api_token=$(python3 - "$CF_DIR/cert.pem" <<'PYEOF'
+import sys, json, base64
+pem = open(sys.argv[1]).read()
+body = pem.split('-----BEGIN ARGO TUNNEL TOKEN-----')[1].split('-----END ARGO TUNNEL TOKEN-----')[0]
+body = ''.join(body.split())
+body += "=" * (-len(body) % 4)
+try:
+    d = json.loads(base64.urlsafe_b64decode(body))
+    print(d.get("apiToken", ""))
+except Exception:
+    print("")
+PYEOF
+)
+  [ -n "$api_token" ] || return 1
+  CF_API_TOKEN=$api_token
+  export CF_API_TOKEN
+  return 0
+}
+
+# 统一获取 API Token：优先 API 文件，其次 cert.pem，最后交互输入
+ensure_api_token(){
+  load_api
+  if [ -z "${CF_API_TOKEN:-}" ]; then
+    extract_api_token_from_cert || return 1
+  fi
+  [ -n "$CF_API_TOKEN" ] || return 1
+  export CF_API_TOKEN
+}
+
 load_dns_zone_id(){
-  ask_api || return 1
+  ensure_api_token || { red '无法获取 Cloudflare API Token（请配置 /etc/cloudflared-manager.api 或确认 cert.pem 有效）'; return 1; }
   curl --fail --silent --show-error \
     -H "Authorization: Bearer $CF_API_TOKEN" \
     -H 'Content-Type: application/json' \
@@ -309,6 +343,7 @@ route_delete(){
     red '请先配置 Zone 和域名'; return 1;
   }
   valid_id "$CF_TUNNEL_ID" || { red 'Tunnel ID 无效'; return 1; }
+  ensure_api_token || { red '无法获取 Cloudflare API Token（请配置 /etc/cloudflared-manager.api 或确认 cert.pem 有效）'; return 1; }
   zone_id=$(load_dns_zone_id) || return 1
   [ -n "$zone_id" ] || { red '找不到 Zone ID'; return 1; }
 
@@ -480,19 +515,21 @@ websocket_probe(){
     return 1
   }
   headers=$(mktemp)
+  # 3 秒内未收到响应即判定超时；WebSocket 升级后连接保持开放，curl 会一直等待，
+  # 因此用 --max-time 4 让探测尽快返回（收到 101 即视为成功）
   if curl --silent --show-error --http1.1 \
-      --connect-timeout 5 --max-time 15 \
+      --connect-timeout 3 --max-time 4 \
       -D "$headers" -o /dev/null \
       -H 'Connection: Upgrade' \
       -H 'Upgrade: websocket' \
       -H 'Sec-WebSocket-Version: 13' \
       -H "Sec-WebSocket-Key: $key" \
-      "$url"; then
+      "$url" 2>/dev/null; then
     curl_rc=0
   else
     curl_rc=$?
   fi
-  status=$(awk 'NR == 1 { print $2; exit }' "$headers")
+  status=$(awk 'NR == 1 { print $2; exit }' "$headers" 2>/dev/null)
   if [ "$status" = 101 ]; then
     rm -f "$headers"
     if [ "$curl_rc" -eq 28 ]; then
@@ -508,7 +545,7 @@ websocket_probe(){
     return 1
   fi
   red "$label: WebSocket 握手失败 (HTTP ${status:-unknown})"
-  sed -n '1,8p' "$headers"
+  sed -n '1,8p' "$headers" 2>/dev/null
   rm -f "$headers"
   return 1
 }
@@ -699,9 +736,24 @@ login_cf(){
   require_bin || return 1
   mkdir -p "$CF_DIR"
   chmod 700 "$CF_DIR"
+  # 已有证书且可解析时跳过登录，避免无谓删除导致隧道不可用
+  if [ -s "$CF_DIR/cert.pem" ]; then
+    green '已存在 Cloudflare 授权证书，跳过重新登录'
+    return 0
+  fi
+  # 旧证书备份后重登（防止登录失败导致证书丢失）
+  if [ -f "$CF_DIR/cert.pem" ]; then
+    cp -a "$CF_DIR/cert.pem" "$CF_DIR/cert.pem.bak.$(date +%s)" 2>/dev/null || true
+  fi
   rm -f "$CF_DIR/cert.pem"
   "$CF_BIN" login
-  [ -s "$CF_DIR/cert.pem" ] || { red '未生成 cert.pem'; return 1; }
+  [ -s "$CF_DIR/cert.pem" ] || {
+    red '未生成 cert.pem'
+    # 恢复旧证书
+    old=$(ls -t "$CF_DIR"/cert.pem.bak.* 2>/dev/null | head -n1 || true)
+    [ -n "$old" ] && { cp -a "$old" "$CF_DIR/cert.pem" 2>/dev/null || true; green '已恢复原证书'; }
+    return 1
+  }
   chmod 600 "$CF_DIR/cert.pem"
   green 'Cloudflare 授权成功'
 }

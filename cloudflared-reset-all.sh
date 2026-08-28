@@ -48,16 +48,26 @@ confirm_reset(){
 relogin_cloudflare(){
   mkdir -p "$CF_DIR"
   chmod 700 "$CF_DIR"
-  rm -f ~/.cloudflared/cert.pem
+  # 先备份旧证书，登录失败时恢复，避免丢失授权导致隧道不可用
+  if [ -s "$CF_DIR/cert.pem" ]; then
+    cp -a "$CF_DIR/cert.pem" "$CF_DIR/cert.pem.bak.$(date +%s)" 2>/dev/null || true
+  fi
+  rm -f "$CF_DIR/cert.pem"
 
-  yellow '旧的 Cloudflare cert.pem 已删除，请在浏览器中完成新的授权'
+  yellow '旧的 Cloudflare cert.pem 已备份并删除，请在浏览器中完成新的授权'
   if "$CF_BIN" login; then
     [ -s "$CF_DIR/cert.pem" ] || {
       red 'cloudflared login 未生成 cert.pem'
+      # 恢复备份
+      old=$(ls -t "$CF_DIR"/cert.pem.bak.* 2>/dev/null | head -n1 || true)
+      [ -n "$old" ] && { cp -a "$old" "$CF_DIR/cert.pem" 2>/dev/null || true; green '已恢复原证书'; }
       return 1
     }
   else
     red 'cloudflared login 失败或未完成'
+    # 恢复备份
+    old=$(ls -t "$CF_DIR"/cert.pem.bak.* 2>/dev/null | head -n1 || true)
+    [ -n "$old" ] && { cp -a "$old" "$CF_DIR/cert.pem" 2>/dev/null || true; green '已恢复原证书'; }
     return 1
   fi
   chmod 600 "$CF_DIR/cert.pem"
