@@ -25,6 +25,8 @@ README 的命令按“一个代码块一个命令”排列，便于直接复制�
 - 支持保留已有 Tunnel，重新登录后创建新的 Tunnel。
 - 已验证 Cloudflare Tunnel 公网 HTTPS 到本地 WebSocket 的完整链路。
 - 服务生成时自动创建 sing-box 日志目录，避免日志路径不存在导致服务启动失败。
+- 自动检测服务器公网 IP，避免生成回环地址链接。
+- 参数文件安全读取，避免注入风险。
 
 ## 🧩 功能概览
 
@@ -41,7 +43,7 @@ README 的命令按“一个代码块一个命令”排列，便于直接复制�
 | 链路检查 | 检查本地回源、DNS、Tunnel 状态和公网 HTTPS |
 | 重新登录 | 删除本机旧 cert.pem 并重新登录，不删除已有 Tunnel |
 | 公网 IP 检测 | 自动检测服务器公网 IP，避免生成回环地址链接 |
-| 参数安全读取 | params.env 以纯赋值方式读取，避免注入风险 |
+| 参数安全读取 | 参数文件以纯赋值方式读取，避免注入风险 |
 | 中文界面 | 菜单、状态、错误提示和使用说明均为中文 |
 
 ## ⚡ 快速开始
@@ -164,28 +166,24 @@ http2
 主要功能：
 
 ```text
-  1) 一键完整流程（登录/创建/配置/DNS/自启/验证）
+  1) 安装/更新 cloudflared
   2) Cloudflare 登录授权
-  3) 安装或更新 cloudflared
-  4) 查看 Tunnel 列表
-  5) 创建 Tunnel
-  6) 选择已有 Tunnel
-  7) 配置 Zone/域名/回源端口/WS路径
-  8) 编辑 Tunnel config.yml
-  9) 添加或覆盖 DNS 路由
- 10) 删除 DNS 路由（API Token）
- 11) 校验配置和规则
- 12) 启动并设置自启
- 13) 停止 Tunnel
- 14) 重启 Tunnel
- 15) 查看状态/连接/日志
- 16) 查看 Tunnel 详细信息
- 17) 检查本地回源
- 18) 检查公网链路
- 19) 输出客户端参数
- 20) 编辑并校验 sing-box JSON
- 21) 常用命令
- 22) 删除 Tunnel
+  3) 列出 Tunnel
+  4) 创建 Tunnel
+  5) 选择已有 Tunnel
+  6) 配置 Zone/域名/回源端口/WS路径
+  7) 校验 Ingress 配置
+  8) 添加或覆盖 DNS 路由
+  9) 删除 DNS 路由（API Token）
+ 10) 启动 Tunnel
+ 11) 停止 Tunnel
+ 12) 重启 Tunnel
+ 13) 查看 Tunnel 状态/连接/日志
+ 14) 检查本地回源
+ 15) 检查公网链路
+ 16) 删除当前 Tunnel
+ 17) 查看最近日志
+ 18) 查看命令帮助
   0) 退出
 ```
 
@@ -389,6 +387,7 @@ dig +short CNAME your-hostname.example.com
 - 如果 QUIC/UDP 不稳定，可以将 Tunnel 协议改为 `http2`。
 - 生产环境操作前建议创建 VPS/LXC 快照。
 - 请只在自己拥有或获授权管理的服务器和 Cloudflare Zone 上使用。
+- 重置节点随机参数后，客户端旧链接会失效，请以脚本输出的新链接为准。
 
 ## 📄 License
 
