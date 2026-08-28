@@ -93,12 +93,12 @@ EOF
 
 read_secret(){
   prompt=$1
-  printf '%s' "$prompt"
+  printf '%s' "$prompt" >&2
   old_stty=$(stty -g 2>/dev/null || true)
   stty -echo 2>/dev/null || true
   IFS= read -r secret || secret=
   [ -n "$old_stty" ] && stty "$old_stty" 2>/dev/null || true
-  printf '\n'
+  printf '\n' >&2
   printf '%s' "$secret"
 }
 
