@@ -184,6 +184,16 @@ cert_self(){
   green "自签证书已生成: $CERT"
 }
 load_cf_token(){ if [ -r "$CF_ENV" ]; then . "$CF_ENV"; fi; return 0; }
+read_secret(){
+  prompt=$1
+  printf '%s' "$prompt" >&2
+  old_stty=$(stty -g 2>/dev/null || true)
+  stty -echo 2>/dev/null || true
+  IFS= read -r secret || secret=
+  [ -n "$old_stty" ] && stty "$old_stty" 2>/dev/null || true
+  printf '\n' >&2
+  printf '%s' "$secret"
+}
 save_cf_token(){
   mkdir -p "$(dirname "$CF_ENV")"
   umask 077
@@ -197,11 +207,11 @@ cert_acme(){
     printf '检测到已保存 Cloudflare API Token，是否重新输入？[y/N]: '
     read_line replace_token || replace_token=n
     case "$replace_token" in
-      y|Y) printf '请输入 Cloudflare API Token: '; read_line CF_Token; [ -n "$CF_Token" ] || { red 'API Token 不能为空'; return 1; }; save_cf_token ;;
+      y|Y) CF_Token=$(read_secret '请输入 Cloudflare API Token（不可回显）: '); [ -n "$CF_Token" ] || { red 'API Token 不能为空'; return 1; }; save_cf_token ;;
       *) green "将使用已保存 Token: $CF_ENV" ;;
     esac
   else
-    printf '请输入 Cloudflare API Token: '; read_line CF_Token
+    CF_Token=$(read_secret '请输入 Cloudflare API Token（不可回显）: ')
     [ -n "$CF_Token" ] || { red 'API Token 不能为空'; return 1; }
     save_cf_token
   fi
@@ -259,12 +269,12 @@ status_nodes(){
   line
   printf '当前节点状态:\n'
   printf '服务器: %s | 域名/SNI: %s | 节点名: %s\n' "${SERVER:-未设置}" "${DOMAIN:-未设置}" "$NODE"
-  [ "$ANYTLS" = 1 ] && printf 'AnyTLS        : 开启  端口 %s\n' "$ANYTLS_PORT" || printf 'AnyTLS        : 关闭\n'
-  [ "$TUIC" = 1 ] && printf 'TUIC          : 开启  端口 %s\n' "$TUIC_PORT" || printf 'TUIC          : 关闭\n'
-  [ "$HY2" = 1 ] && printf 'Hysteria2     : 开启  端口 %s\n' "$HY2_PORT" || printf 'Hysteria2     : 关闭\n'
-  [ "$VLESS_WS" = 1 ] && printf 'VLESS+WS      : 开启  端口 %s  path %s\n' "$VLESS_WS_PORT" "$VLESS_WS_PATH" || printf 'VLESS+WS      : 关闭\n'
-  [ "$VMESS_WS" = 1 ] && printf 'VMess+WS      : 开启  端口 %s  path %s\n' "$VMESS_WS_PORT" "$VMESS_WS_PATH" || printf 'VMess+WS      : 关闭\n'
-  [ "$REALITY" = 1 ] && printf 'VLESS+Reality : 开启  端口 %s  sni %s\n' "$REALITY_PORT" "$REALITY_SNI" || printf 'VLESS+Reality : 关闭\n'
+  if [ "$ANYTLS" = 1 ]; then printf 'AnyTLS        : 开启  端口 %s\n' "$ANYTLS_PORT"; else printf 'AnyTLS        : 关闭\n'; fi
+  if [ "$TUIC" = 1 ]; then printf 'TUIC          : 开启  端口 %s\n' "$TUIC_PORT"; else printf 'TUIC          : 关闭\n'; fi
+  if [ "$HY2" = 1 ]; then printf 'Hysteria2     : 开启  端口 %s\n' "$HY2_PORT"; else printf 'Hysteria2     : 关闭\n'; fi
+  if [ "$VLESS_WS" = 1 ]; then printf 'VLESS+WS      : 开启  端口 %s  path %s\n' "$VLESS_WS_PORT" "$VLESS_WS_PATH"; else printf 'VLESS+WS      : 关闭\n'; fi
+  if [ "$VMESS_WS" = 1 ]; then printf 'VMess+WS      : 开启  端口 %s  path %s\n' "$VMESS_WS_PORT" "$VMESS_WS_PATH"; else printf 'VMess+WS      : 关闭\n'; fi
+  if [ "$REALITY" = 1 ]; then printf 'VLESS+Reality : 开启  端口 %s  sni %s\n' "$REALITY_PORT" "$REALITY_SNI"; else printf 'VLESS+Reality : 关闭\n'; fi
 }
 
 set_common(){
@@ -296,6 +306,7 @@ regen_random_current(){
   reality_keys
   apply_config
   green '已为当前启用协议重置随机参数'
+  yellow '注意：客户端旧链接已失效，请使用下面新生成的链接'
   links
 }
 
