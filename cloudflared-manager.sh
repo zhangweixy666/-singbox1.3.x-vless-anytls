@@ -67,10 +67,11 @@ defaults(){
 load_env(){
   defaults
   [ -r "$CF_ENV" ] || return 0
-  while IFS='=' read -r key value || [ -n "$key" ]; do
+  while IFS='=' read -r key rest || [ -n "$key" ]; do
     case "$key" in
       ''|\#*) continue;;
       CF_TUNNEL_ID|CF_TUNNEL_NAME|CF_CREDENTIALS|CF_ZONE|CF_HOSTNAME|CF_SERVICE_PORT|CF_SERVICE_PATH|CF_PROTOCOL|CF_ENABLED)
+        value=${rest#*=}
         set_cf_value "$key" "$value";;
     esac
   done < "$CF_ENV"
@@ -114,11 +115,9 @@ ask(){
 }
 
 valid_id(){
-  case "$1" in
-    ????????-????-????-????-????????????) return 0;;
-    *) return 1;;
-  esac
+  printf %s "$1" | grep -Eq "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 }
+
 
 valid_port(){
   case "$1" in ''|*[!0-9]*) return 1;; esac
@@ -126,12 +125,16 @@ valid_port(){
 }
 
 valid_host(){
-  case "$1" in ''|*[!A-Za-z0-9.-]*) return 1;; esac
-  return 0
+  printf %s "$1" | grep -Eq "^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$" && ! printf %s "$1" | grep -q "\.\."
 }
+
 
 valid_path(){
   case "$1" in
+    *[!A-Za-z0-9._~/-]*|*\ *|*\.\.*) return 1;;
+  esac
+  case "$1" in
+    /) return 0;;
     /[A-Za-z0-9._~/-]*) return 0;;
     *) return 1;;
   esac
@@ -229,11 +232,34 @@ select_tunnel(){
   require_bin || return 1
   load_env
   list_tunnels || return 1
-  ask CF_TUNNEL_ID "Tunnel ID [${CF_TUNNEL_ID:-}]: " "$CF_TUNNEL_ID"
+  # 解析 tunnel list，展示带序号列表供选择
+  tmp=$(mktemp)
+  "$CF_BIN" tunnel list 2>/dev/null | awk 'NR > 2 && NF >= 2 { printf "%d %s %s\n", NR-2, $1, $2 }' > "$tmp"
+  if [ ! -s "$tmp" ]; then
+    rm -f "$tmp"
+    red '未找到 Tunnel 列表'
+    return 1
+  fi
+  printf '%s\n' '请选择 Tunnel (输入序号或直接粘贴 ID):'
+  awk '{ printf "  %d) %s (%s)\n", $1, $3, $2 }' "$tmp"
+  printf '选择 [%s]: ' "${CF_TUNNEL_ID:-}"
+  IFS= read -r choice || choice=
+  choice=$(printf '%s' "$choice" | tr -d ' ')
+  if printf '%s' "$choice" | grep -Eq '^[0-9]+$' && [ "$choice" -ge 1 ] 2>/dev/null; then
+    sel_line=$(awk -v n="$choice" '$1 == n { print; exit }' "$tmp")
+    [ -n "$sel_line" ] || { red '序号无效'; rm -f "$tmp"; return 1; }
+    set -- $sel_line
+    CF_TUNNEL_ID=$2
+    CF_TUNNEL_NAME=$3
+  else
+    CF_TUNNEL_ID=$choice
+  fi
+  rm -f "$tmp"
   valid_id "$CF_TUNNEL_ID" || { red 'Tunnel ID 格式无效'; return 1; }
   CF_CREDENTIALS=$CF_DIR/$CF_TUNNEL_ID.json
   [ -f "$CF_CREDENTIALS" ] || yellow "本地凭据不存在: $CF_CREDENTIALS"
   save_env
+  green "已选择 Tunnel: $CF_TUNNEL_ID ($CF_TUNNEL_NAME)"
 }
 
 configure_ingress(){
@@ -311,11 +337,12 @@ PYEOF
 ensure_api_token(){
   load_api
   if [ -z "${CF_API_TOKEN:-}" ]; then
-    extract_api_token_from_cert || return 1
+    extract_api_token_from_cert || ask_api || return 1
   fi
   [ -n "$CF_API_TOKEN" ] || return 1
   export CF_API_TOKEN
 }
+
 
 load_dns_zone_id(){
   ensure_api_token || { red '无法获取 Cloudflare API Token（请配置 /etc/cloudflared-manager.api 或确认 cert.pem 有效）'; return 1; }
@@ -487,10 +514,6 @@ stop_tunnel(){
     openrc) rc-service cloudflared stop >/dev/null 2>&1 || true;;
     systemd) systemctl stop cloudflared >/dev/null 2>&1 || true;;
   esac
-  if [ -s "$CF_PIDFILE" ]; then
-    pid=$(cat "$CF_PIDFILE" 2>/dev/null || true)
-    case "$pid" in ''|*[!0-9]*) ;; *) kill "$pid" 2>/dev/null || true;; esac
-  fi
   rm -f "$CF_PIDFILE"
   green 'Tunnel 已停止'
 }
@@ -503,7 +526,11 @@ status_tunnel(){
   if [ -f "$CF_CONFIG" ]; then
     "$CF_BIN" --config "$CF_CONFIG" tunnel ingress validate 2>&1 || true
   fi
-  pgrep -af 'cloudflared|cloudflared-supervisor' 2>/dev/null || yellow '没有 cloudflared 进程'
+  if [ -n "$CF_TUNNEL_ID" ]; then
+    pgrep -af "$CF_BIN.*$CF_TUNNEL_ID" 2>/dev/null | grep -v "pgrep\|grep" || yellow '没有 cloudflared 进程'
+  else
+    yellow '未配置 Tunnel ID'
+  fi
   [ -f "$CF_LOG" ] && tail -n 20 "$CF_LOG"
 }
 
@@ -697,7 +724,13 @@ guided(){
     printf '检测到现有 Tunnel [%s]，是否复用？[Y/n]: ' "$CF_TUNNEL_NAME"
     IFS= read -r reuse || reuse=
     case "$reuse" in
-      n|N) create_tunnel || return 1;;
+      n|N)
+        printf '输入 1 创建新 Tunnel，输入 2 选择已有 Tunnel [1]: '
+        IFS= read -r act2 || act2=1
+        case "$act2" in
+          2) select_tunnel || return 1;;
+          *) create_tunnel || return 1;;
+        esac;;
       *) green '复用现有 Tunnel';;
     esac
   else
