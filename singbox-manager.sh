@@ -399,15 +399,21 @@ PY
 
 service_create(){
   if [ "$INIT" = openrc ]; then
+    mkdir -p "$LOG_DIR"
+    chmod 755 "$LOG_DIR"
     cat > "$SERVICE_FILE" <<EOF
 #!/sbin/openrc-run
 name="sing-box"
+description="sing-box server"
+supervisor=supervise-daemon
 command="$BIN"
 command_args="run -c $CFG"
 command_background="yes"
 pidfile="/run/sing-box.pid"
 output_log="$LOG"
 error_log="$LOG"
+respawn_delay=5
+respawn_max=0
 start_pre(){ $BIN check -c $CFG; }
 depend(){ need net; after firewall; }
 EOF
