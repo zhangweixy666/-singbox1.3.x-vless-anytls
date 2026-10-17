@@ -127,6 +127,17 @@ defaults(){
   REALITY=0; REALITY_PORT=18446; REALITY_UUID=; REALITY_SNI=www.apple.com; REALITY_SHORT_ID=
   SERVER=; DOMAIN=; NODE=sing-box-node; CERT_MODE=none
 }
+set_param(){
+  case "$1" in
+    ANYTLS) ANYTLS=$2;; ANYTLS_PORT) ANYTLS_PORT=$2;; ANYTLS_NAME) ANYTLS_NAME=$2;; ANYTLS_PASSWORD) ANYTLS_PASSWORD=$2;;
+    TUIC) TUIC=$2;; TUIC_PORT) TUIC_PORT=$2;; TUIC_UUID) TUIC_UUID=$2;; TUIC_PASSWORD) TUIC_PASSWORD=$2;;
+    HY2) HY2=$2;; HY2_PORT) HY2_PORT=$2;; HY2_PASSWORD) HY2_PASSWORD=$2;;
+    VLESS_WS) VLESS_WS=$2;; VLESS_WS_PORT) VLESS_WS_PORT=$2;; VLESS_WS_UUID) VLESS_WS_UUID=$2;; VLESS_WS_PATH) VLESS_WS_PATH=$2;;
+    VMESS_WS) VMESS_WS=$2;; VMESS_WS_PORT) VMESS_WS_PORT=$2;; VMESS_WS_UUID) VMESS_WS_UUID=$2;; VMESS_WS_PATH) VMESS_WS_PATH=$2;;
+    REALITY) REALITY=$2;; REALITY_PORT) REALITY_PORT=$2;; REALITY_UUID) REALITY_UUID=$2;; REALITY_SNI) REALITY_SNI=$2;; REALITY_SHORT_ID) REALITY_SHORT_ID=$2;;
+    SERVER) SERVER=$2;; DOMAIN) DOMAIN=$2;; NODE) NODE=$2;; CERT_MODE) CERT_MODE=$2;;
+  esac
+}
 load(){
   defaults
   [ -f "$PARAMS" ] || return 0
@@ -135,11 +146,11 @@ load(){
     k=${l%%=*}; v=${l#*=}
     case "$k" in
       ANYTLS|ANYTLS_PORT|ANYTLS_NAME|ANYTLS_PASSWORD|TUIC|TUIC_PORT|TUIC_UUID|TUIC_PASSWORD|HY2|HY2_PORT|HY2_PASSWORD|VLESS_WS|VLESS_WS_PORT|VLESS_WS_UUID|VLESS_WS_PATH|VMESS_WS|VMESS_WS_PORT|VMESS_WS_UUID|VMESS_WS_PATH|REALITY|REALITY_PORT|REALITY_UUID|REALITY_SNI|REALITY_SHORT_ID|SERVER|DOMAIN|NODE|CERT_MODE)
-        # 只赋值，不重新解析取值：避免 params.env 中的引号/分号被 eval 执行
-        eval "$k=\$v" ;;
+        set_param "$k" "$v";;
     esac
   done < "$PARAMS"
 }
+
 save(){
   umask 077
   mkdir -p "$CFG_DIR"
@@ -183,7 +194,15 @@ cert_self(){
   CERT_MODE=self
   green "自签证书已生成: $CERT"
 }
-load_cf_token(){ if [ -r "$CF_ENV" ]; then . "$CF_ENV"; fi; return 0; }
+load_cf_token(){
+  CF_Token=
+  [ -r "$CF_ENV" ] || return 0
+  while IFS='=' read -r key rest || [ -n "$key" ]; do
+    case "$key" in
+      CF_Token) CF_Token=${rest#*=};;
+    esac
+  done < "$CF_ENV"
+}
 read_secret(){
   prompt=$1
   printf '%s' "$prompt" >&2
@@ -197,11 +216,33 @@ read_secret(){
 save_cf_token(){
   mkdir -p "$(dirname "$CF_ENV")"
   umask 077
-  printf '%s\n' "export CF_Token=\"$CF_Token\"" > "$CF_ENV"
-  chmod 600 "$CF_ENV"
+  tmp="$CF_ENV.tmp.$$"
+  printf 'CF_Token=%s\n' "$CF_Token" > "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$CF_ENV"
 }
 cert_acme(){
-  [ -x "$ACME" ] || { curl https://get.acme.sh | sh; }
+  if [ ! -x "$ACME" ]; then
+    tmp_acme=$(mktemp)
+    if ! curl --fail --silent --show-error --location --connect-timeout 5 --max-time 120 \
+        https://get.acme.sh -o "$tmp_acme"; then
+      rm -f "$tmp_acme"
+      red 'acme.sh 安装脚本下载失败'
+      return 1
+    fi
+    if ! grep -q 'acme.sh' "$tmp_acme"; then
+      rm -f "$tmp_acme"
+      red 'acme.sh 安装脚本内容校验失败'
+      return 1
+    fi
+    if ! sh "$tmp_acme"; then
+      rm -f "$tmp_acme"
+      red 'acme.sh 安装失败'
+      return 1
+    fi
+    rm -f "$tmp_acme"
+    [ -x "$ACME" ] || { red "acme.sh 安装后未找到: $ACME"; return 1; }
+  fi
   load_cf_token
   if [ -n "${CF_Token:-}" ]; then
     printf '检测到已保存 Cloudflare API Token，是否重新输入？[y/N]: '
@@ -251,7 +292,15 @@ reality_keys(){
   [ -n "$REALITY_SHORT_ID" ] || REALITY_SHORT_ID=$(shortid)
 }
 
-ask_set(){ _var="$1"; _prompt="$2"; _default="$3"; printf '%s' "$_prompt"; read_line _ans || _ans=; if [ -n "$_ans" ]; then eval "$_var=\"\$_ans\""; else eval "$_var=\"\$_default\""; fi; }
+ask_set(){
+  _var="$1"
+  _prompt="$2"
+  _default="$3"
+  printf '%s' "$_prompt"
+  read_line _ans || _ans=
+  if [ -n "$_ans" ]; then set_param "$_var" "$_ans"; else set_param "$_var" "$_default"; fi
+}
+
 ensure_common(){
   load
   ensure_binary
@@ -341,55 +390,68 @@ generate_config(){
   TMP="$CFG.tmp.$$"
   mkdir -p "$CFG_DIR" "$LOG_DIR"
   [ "$ANYTLS$TUIC$HY2$VLESS_WS$VMESS_WS$REALITY" != 000000 ] || { red '没有启用节点'; return 1; }
-  python3 - "$TMP" <<PY
-import json, pathlib, sys
+  LOG="$LOG" CERT="$CERT" KEY="$KEY" REALITY_DIR="$REALITY_DIR" \
+  ANYTLS="$ANYTLS" ANYTLS_PORT="$ANYTLS_PORT" ANYTLS_NAME="$ANYTLS_NAME" ANYTLS_PASSWORD="$ANYTLS_PASSWORD" \
+  TUIC="$TUIC" TUIC_PORT="$TUIC_PORT" TUIC_UUID="$TUIC_UUID" TUIC_PASSWORD="$TUIC_PASSWORD" \
+  HY2="$HY2" HY2_PORT="$HY2_PORT" HY2_PASSWORD="$HY2_PASSWORD" \
+  VLESS_WS="$VLESS_WS" VLESS_WS_PORT="$VLESS_WS_PORT" VLESS_WS_UUID="$VLESS_WS_UUID" VLESS_WS_PATH="$VLESS_WS_PATH" \
+  VMESS_WS="$VMESS_WS" VMESS_WS_PORT="$VMESS_WS_PORT" VMESS_WS_UUID="$VMESS_WS_UUID" VMESS_WS_PATH="$VMESS_WS_PATH" \
+  REALITY="$REALITY" REALITY_PORT="$REALITY_PORT" REALITY_UUID="$REALITY_UUID" REALITY_SNI="$REALITY_SNI" REALITY_SHORT_ID="$REALITY_SHORT_ID" \
+  python3 - "$TMP" <<'PY'
+import json, os, pathlib, sys
 out = pathlib.Path(sys.argv[1])
+def env(name):
+    return os.environ.get(name, '')
+def enabled(name):
+    return env(name) == '1'
+def port(name):
+    return int(env(name))
 config = {
-    "log": {"level": "info", "timestamp": True, "output": "$LOG"},
-    "inbounds": [],
-    "outbounds": [{"type": "direct", "tag": "direct"}],
-    "route": {"final": "direct"},
+    'log': {'level': 'info', 'timestamp': True, 'output': env('LOG')},
+    'inbounds': [],
+    'outbounds': [{'type': 'direct', 'tag': 'direct'}],
+    'route': {'final': 'direct'},
 }
-if "$VLESS_WS" == "1":
-    config["inbounds"].append({
-        "type": "vless", "tag": "ws-in", "listen": "::", "listen_port": int("$VLESS_WS_PORT"),
-        "users": [{"uuid": "$VLESS_WS_UUID"}],
-        "transport": {"type": "ws", "path": "$VLESS_WS_PATH", "early_data_header_name": "Sec-WebSocket-Protocol"},
+if enabled('VLESS_WS'):
+    config['inbounds'].append({
+        'type': 'vless', 'tag': 'ws-in', 'listen': '::', 'listen_port': port('VLESS_WS_PORT'),
+        'users': [{'uuid': env('VLESS_WS_UUID')}],
+        'transport': {'type': 'ws', 'path': env('VLESS_WS_PATH'), 'early_data_header_name': 'Sec-WebSocket-Protocol'},
     })
-if "$VMESS_WS" == "1":
-    config["inbounds"].append({
-        "type": "vmess", "tag": "vmess-in", "listen": "::", "listen_port": int("$VMESS_WS_PORT"),
-        "users": [{"name": "user", "uuid": "$VMESS_WS_UUID", "alterId": 0}],
-        "transport": {"type": "ws", "path": "$VMESS_WS_PATH", "early_data_header_name": "Sec-WebSocket-Protocol"},
+if enabled('VMESS_WS'):
+    config['inbounds'].append({
+        'type': 'vmess', 'tag': 'vmess-in', 'listen': '::', 'listen_port': port('VMESS_WS_PORT'),
+        'users': [{'name': 'user', 'uuid': env('VMESS_WS_UUID'), 'alterId': 0}],
+        'transport': {'type': 'ws', 'path': env('VMESS_WS_PATH'), 'early_data_header_name': 'Sec-WebSocket-Protocol'},
     })
-if "$REALITY" == "1":
-    private_key = pathlib.Path("$REALITY_DIR/private.key").read_text().strip()
-    config["inbounds"].append({
-        "type": "vless", "tag": "reality-in", "listen": "::", "listen_port": int("$REALITY_PORT"),
-        "users": [{"uuid": "$REALITY_UUID", "flow": "xtls-rprx-vision"}],
-        "tls": {"enabled": True, "server_name": "$REALITY_SNI", "reality": {"enabled": True, "handshake": {"server": "$REALITY_SNI", "server_port": 443}, "private_key": private_key, "short_id": ["$REALITY_SHORT_ID"]}},
+if enabled('REALITY'):
+    private_key = pathlib.Path(env('REALITY_DIR')) / 'private.key'
+    config['inbounds'].append({
+        'type': 'vless', 'tag': 'reality-in', 'listen': '::', 'listen_port': port('REALITY_PORT'),
+        'users': [{'uuid': env('REALITY_UUID'), 'flow': 'xtls-rprx-vision'}],
+        'tls': {'enabled': True, 'server_name': env('REALITY_SNI'), 'reality': {'enabled': True, 'handshake': {'server': env('REALITY_SNI'), 'server_port': 443}, 'private_key': private_key.read_text().strip(), 'short_id': [env('REALITY_SHORT_ID')]}},
     })
-if "$ANYTLS" == "1":
-    config["inbounds"].append({
-        "type": "anytls", "tag": "anytls-in", "listen": "::", "listen_port": int("$ANYTLS_PORT"),
-        "users": [{"name": "$ANYTLS_NAME", "password": "$ANYTLS_PASSWORD"}],
-        "tls": {"enabled": True, "certificate_path": "$CERT", "key_path": "$KEY"},
+if enabled('ANYTLS'):
+    config['inbounds'].append({
+        'type': 'anytls', 'tag': 'anytls-in', 'listen': '::', 'listen_port': port('ANYTLS_PORT'),
+        'users': [{'name': env('ANYTLS_NAME'), 'password': env('ANYTLS_PASSWORD')}],
+        'tls': {'enabled': True, 'certificate_path': env('CERT'), 'key_path': env('KEY')},
     })
-if "$HY2" == "1":
-    config["inbounds"].append({
-        "type": "hysteria2", "tag": "hy2-in", "listen": "::", "listen_port": int("$HY2_PORT"),
-        "obfs": {"type": "salamander", "password": "$HY2_PASSWORD"},
-        "users": [{"name": "user", "password": "$HY2_PASSWORD"}],
-        "tls": {"enabled": True, "alpn": ["h3"], "certificate_path": "$CERT", "key_path": "$KEY"},
+if enabled('HY2'):
+    config['inbounds'].append({
+        'type': 'hysteria2', 'tag': 'hy2-in', 'listen': '::', 'listen_port': port('HY2_PORT'),
+        'obfs': {'type': 'salamander', 'password': env('HY2_PASSWORD')},
+        'users': [{'name': 'user', 'password': env('HY2_PASSWORD')}],
+        'tls': {'enabled': True, 'alpn': ['h3'], 'certificate_path': env('CERT'), 'key_path': env('KEY')},
     })
-if "$TUIC" == "1":
-    config["inbounds"].append({
-        "type": "tuic", "tag": "tuic-in", "listen": "::", "listen_port": int("$TUIC_PORT"),
-        "users": [{"name": "user", "uuid": "$TUIC_UUID", "password": "$TUIC_PASSWORD"}],
-        "congestion_control": "bbr", "auth_timeout": "3s", "zero_rtt_handshake": False, "heartbeat": "10s",
-        "tls": {"enabled": True, "alpn": ["h3"], "certificate_path": "$CERT", "key_path": "$KEY"},
+if enabled('TUIC'):
+    config['inbounds'].append({
+        'type': 'tuic', 'tag': 'tuic-in', 'listen': '::', 'listen_port': port('TUIC_PORT'),
+        'users': [{'name': 'user', 'uuid': env('TUIC_UUID'), 'password': env('TUIC_PASSWORD')}],
+        'congestion_control': 'bbr', 'auth_timeout': '3s', 'zero_rtt_handshake': False, 'heartbeat': '10s',
+        'tls': {'enabled': True, 'alpn': ['h3'], 'certificate_path': env('CERT'), 'key_path': env('KEY')},
     })
-out.write_text(json.dumps(config, ensure_ascii=True, indent=2) + chr(10))
+out.write_text(json.dumps(config, ensure_ascii=True, indent=2) + '\n')
 PY
   "$BIN" check -c "$TMP"
   mv "$TMP" "$CFG"

@@ -21,7 +21,12 @@ README 的命令按“一个代码块一个命令”排列，便于直接复制�
 - 使用 Cloudflare Tunnel 将公网 HTTPS 443 转发到本地 WebSocket 服务。
 - 支持 Alpine/OpenRC 和 Debian/Ubuntu/systemd。
 - 支持 cloudflared 崩溃后自动重启。
+- cloudflared 固定为 `2026.10.1`，下载时校验官方 SHA-256，运行时关闭自动更新。
+- 从零执行 `guided` 时会自动安装并校验 cloudflared，不需要先手动执行 `install`。
 - 支持 Tunnel 创建、选择、Ingress 配置、DNS 路由和状态检查。
+- Tunnel、JSON 凭据、Ingress 配置和状态文件会在启动前做一致性校验。
+- Ingress 校验失败时保留原配置，避免错误配置覆盖正在使用的配置。
+- 本地 sing-box 尚未启动时，`guided` 会完成 Tunnel 部署并提示稍后复查回源，不会把“本地端口未监听”误判成 Cloudflare 安装失败。
 - 支持保留已有 Tunnel，重新登录后创建新的 Tunnel。
 - 已验证 Cloudflare Tunnel 公网 HTTPS 到本地 WebSocket 的完整链路。
 - 服务生成时自动创建 sing-box 日志目录，避免日志路径不存在导致服务启动失败。
@@ -68,10 +73,10 @@ chmod +x /root/singbox-manager.sh
 sh /root/singbox-manager.sh
 ```
 
-也可以直接使用在线脚本：
+也可以下载后执行在线脚本：
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-vless-anytls/main/singbox-manager.sh | sh
+wget -qO /tmp/singbox-manager.sh https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-vless-anytls/main/singbox-manager.sh && test -s /tmp/singbox-manager.sh && sh /tmp/singbox-manager.sh
 ```
 
 ### 2. 安装 Cloudflare Tunnel 管理器
@@ -79,7 +84,7 @@ wget -qO- https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-vless-an
 下载脚本：
 
 ```sh
-wget -qO /usr/local/bin/cloudflared-manager.sh https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-vless-anytls/main/cloudflared-manager.sh
+wget -qO /usr/local/bin/cloudflared-manager.sh https://raw.githubusercontent.com/zhangweixy666/-singbox1.3.x-vless-anytls/main/cloudflared-manager.sh && test -s /usr/local/bin/cloudflared-manager.sh
 ```
 
 赋予执行权限：
@@ -97,23 +102,42 @@ chmod +x /usr/local/bin/cloudflared-manager.sh
 一键流程包括：
 
 ```text
-Cloudflare 授权
+检查并自动安装固定版本 cloudflared 2026.10.1
     ↓
-安装或检查 cloudflared
+Cloudflare 授权
     ↓
 创建或选择 Tunnel
     ↓
 配置 Zone、域名、本地端口和 WS 路径
     ↓
-生成 config.yml
+临时生成并校验 config.yml，成功后原子替换
     ↓
 添加 DNS CNAME 路由
     ↓
-配置 OpenRC/systemd 自启
+配置 OpenRC/systemd 自启并关闭自动更新
     ↓
 启动 Tunnel
     ↓
-检查本地回源、DNS 和公网链路
+检查 Tunnel 进程和状态一致性
+    ↓
+检查本地回源；本地未就绪时保留部署结果并提示后续复查
+    ↓
+检查公网 WebSocket 链路
+```
+
+首次部署直接执行下面的命令即可。脚本会自动安装固定版本并校验 SHA-256：
+
+```sh
+/usr/local/bin/cloudflared-manager.sh guided
+```
+
+固定版本信息：
+
+```text
+cloudflared: 2026.10.1
+Linux amd64 SHA-256: 3bfc539f45d2620c71debb7a86be0efa737ed5ccbad9eb85c787116900e5c586
+Linux arm64 SHA-256: 2c65dfabf616c40efc7545d107d7a57ad5e21377e2964b7e88af19a238074a46
+自动更新: 已关闭
 ```
 
 ## 🌐 Cloudflare Tunnel 工作方式
@@ -166,7 +190,7 @@ http2
 主要功能：
 
 ```text
-  1) 安装/更新 cloudflared
+  1) 安装/校验固定版本 cloudflared
   2) Cloudflare 登录授权
   3) 列出 Tunnel
   4) 创建 Tunnel
@@ -385,6 +409,8 @@ dig +short CNAME your-hostname.example.com
 - 不要把 Tunnel JSON 凭据、`cert.pem` 或 API Token 提交到 GitHub。
 - Cloudflare Tunnel 不会替代 sing-box 本地监听，必须先确认本地端口和 WS 路径正确。
 - 如果 QUIC/UDP 不稳定，可以将 Tunnel 协议改为 `http2`。
+- `guided` 会自动安装固定版本 cloudflared；如果本地 sing-box 尚未监听回源端口，流程会继续部署 Tunnel，但公网链路要等 sing-box 启动后再检查。
+- 固定版本升级需要更新脚本中的版本和对应官方 SHA-256，然后重新执行 `cloudflared-manager.sh install`，不会自动升级。
 - 生产环境操作前建议创建 VPS/LXC 快照。
 - 请只在自己拥有或获授权管理的服务器和 Cloudflare Zone 上使用。
 - 重置节点随机参数后，客户端旧链接会失效，请以脚本输出的新链接为准。
