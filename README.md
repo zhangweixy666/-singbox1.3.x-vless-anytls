@@ -457,7 +457,7 @@ dig +short CNAME your-hostname.example.com
 
 ---
 
-## ⚠️ 注意事项
+## ⚠ 注意事项
 
 - 所有脚本需要 **root** 权限
 - Cloudflare 登录授权需要在**浏览器**中完成
